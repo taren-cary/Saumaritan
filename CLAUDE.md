@@ -1,0 +1,3 @@
+-Never create any git repositories, branches or commits unless I explicitly tell you to.
+-Never edit code unless you ask me first.
+-Try to save on token usage in your responses while still ensuring we get the job done.

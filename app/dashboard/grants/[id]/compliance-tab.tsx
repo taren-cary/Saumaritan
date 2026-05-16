@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle, Loader2, RefreshCw, FileText } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Download, FileText, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 
 type Transaction = { id: string; date: string | null; description: string | null; vendor: string | null; amount: number | null };
 type Finding = {
@@ -53,11 +54,19 @@ function ScoreRing({ score }: { score: number }) {
   );
 }
 
-export default function ComplianceTab({ grantId }: { grantId: string }) {
+interface Grant {
+  name: string; grant_number: string | null; awarding_agency: string | null;
+  cfda_number: string | null; award_amount: number | null;
+  period_start: string | null; period_end: string | null;
+  organizations: { name: string } | null;
+}
+
+export default function ComplianceTab({ grantId, grant }: { grantId: string; grant: Grant }) {
   const [reports, setReports] = useState<Report[]>([]);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   async function fetchReports() {
     const { data } = await supabase
@@ -105,6 +114,45 @@ export default function ComplianceTab({ grantId }: { grantId: string }) {
     }
   }
 
+  async function handleDelete(reportId: string) {
+    const { error } = await supabase.from('compliance_reports').delete().eq('id', reportId);
+    if (error) { toast.error('Failed to delete report'); return; }
+    toast.success('Report deleted');
+    const updated = reports.filter(r => r.id !== reportId);
+    setReports(updated);
+    setSelectedReport(updated[0] ?? null);
+  }
+
+  async function handleExport() {
+    if (!selectedReport) return;
+    setIsExporting(true);
+    try {
+      const { data: settings } = await supabase.from('app_settings').select('firm_name, auditor_name').eq('id', 1).single();
+      const { pdf } = await import('@react-pdf/renderer');
+      const { ComplianceReportPDF } = await import('./compliance-export');
+      const blob = await pdf(
+        ComplianceReportPDF({
+          report: selectedReport,
+          grant,
+          firmName: settings?.firm_name ?? undefined,
+          auditorName: settings?.auditor_name ?? undefined,
+        })
+      ).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const dateStr = new Date(selectedReport.created_at).toISOString().split('T')[0];
+      a.download = `${grant.name.replace(/[^a-z0-9]/gi, '-')}-compliance-${dateStr}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      toast.error('Export failed');
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   const report = selectedReport;
   const findings = report?.compliance_findings ?? [];
   const totalQC = findings.reduce((s, f) => s + (Number(f.questioned_costs) || 0), 0);
@@ -117,9 +165,39 @@ export default function ComplianceTab({ grantId }: { grantId: string }) {
             AI analyzes all transactions against grant requirements and generates GAGAS-compliant findings with citations.
           </p>
         </div>
-        <Button onClick={handleGenerate} disabled={isGenerating}>
-          {isGenerating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><RefreshCw className="h-4 w-4 mr-2" />Generate Report</>}
-        </Button>
+        <div className="flex items-center gap-2">
+          {selectedReport && (
+            <>
+              <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting}>
+                {isExporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Exporting...</> : <><Download className="h-4 w-4 mr-2" />Export PDF</>}
+              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
+                    <Trash2 className="h-4 w-4 mr-2" />Delete
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete this report?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete the compliance report and all its findings. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={() => handleDelete(selectedReport.id)}>
+                      Delete Report
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          )}
+          <Button onClick={handleGenerate} disabled={isGenerating}>
+            {isGenerating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><RefreshCw className="h-4 w-4 mr-2" />Generate Report</>}
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (

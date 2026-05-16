@@ -109,7 +109,7 @@ export default function GrantDetailPage() {
         </TabsContent>
 
         <TabsContent value="compliance" className="mt-6">
-          <ComplianceTab grantId={id} />
+          <ComplianceTab grantId={id} grant={grant} />
         </TabsContent>
       </Tabs>
     </div>

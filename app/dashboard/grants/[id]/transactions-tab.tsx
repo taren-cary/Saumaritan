@@ -203,10 +203,10 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
                     {t.amount != null ? `$${Number(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
                   </TableCell>
                   <TableCell>
-                    <Select value={t.budget_category ?? ''} onValueChange={v => updateCategory(t.id, v)}>
+                    <Select value={t.budget_category ?? 'none'} onValueChange={v => updateCategory(t.id, v === 'none' ? '' : v)}>
                       <SelectTrigger className="h-7 text-xs w-36"><SelectValue placeholder="Uncategorized" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Uncategorized</SelectItem>
+                        <SelectItem value="none">Uncategorized</SelectItem>
                         {BUDGET_CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                       </SelectContent>
                     </Select>

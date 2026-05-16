@@ -32,11 +32,13 @@ const CATEGORIES = [
   'Equipment & Real Property',
   'Matching / Level of Effort / Earmarking',
   'Period of Performance',
+  'Personnel & Compensation',
   'Procurement / Suspension / Debarment',
   'Program Income',
   'Reporting',
   'Subrecipient Monitoring',
   'Special Tests & Provisions',
+  'Travel',
   'Budget Limit',
   'Indirect Cost Rate',
   'Other',
@@ -57,6 +59,7 @@ const REQ_TYPES = [
   { value: 'cash_management', label: 'Cash Management' },
   { value: 'program_income', label: 'Program Income' },
   { value: 'special_provision', label: 'Special Provision' },
+  { value: 'travel', label: 'Travel' },
 ];
 
 const empty = { category: '', title: '', description: '', regulatory_citation: '', requirement_type: '', max_amount: '', documentation_required: '' };

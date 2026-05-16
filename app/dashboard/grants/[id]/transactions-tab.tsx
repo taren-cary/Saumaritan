@@ -82,7 +82,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   const [isUploading, setIsUploading] = useState(false);
   const [search, setSearch] = useState('');
 
-  const fetch = useCallback(async () => {
+  const loadTransactions = useCallback(async () => {
     const { data } = await supabase
       .from('transactions')
       .select('id,date,description,amount,vendor,budget_category,allowability_status,source_file')
@@ -92,29 +92,48 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
     setIsLoading(false);
   }, [grantId]);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => { loadTransactions(); }, [loadTransactions]);
 
   async function processFile(file: File) {
     setIsUploading(true);
     try {
-      let rows: Record<string, unknown>[] = [];
-      if (file.name.endsWith('.csv')) {
-        const text = await file.text();
-        const result = Papa.parse<Record<string, unknown>>(text, { header: true, skipEmptyLines: true });
-        rows = result.data;
+      const name = file.name.toLowerCase();
+      const isCSV = name.endsWith('.csv');
+      const isXLSX = name.endsWith('.xlsx');
+
+      if (isCSV || isXLSX) {
+        let rows: Record<string, unknown>[] = [];
+        if (isCSV) {
+          const text = await file.text();
+          const result = Papa.parse<Record<string, unknown>>(text, { header: true, skipEmptyLines: true });
+          rows = result.data;
+        } else {
+          const buffer = await file.arrayBuffer();
+          const wb = XLSX.read(buffer);
+          rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]]);
+        }
+        if (rows.length === 0) { toast.error('No data found in file.'); return; }
+        const records = rows.map(r => normalizeRow(r, file.name, grantId));
+        const { error } = await supabase.from('transactions').insert(records);
+        if (error) throw error;
+        toast.success(`Imported ${records.length} transactions from ${file.name}`);
+        loadTransactions();
       } else {
-        const buffer = await file.arrayBuffer();
-        const wb = XLSX.read(buffer);
-        rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]]);
+        // PDF or image — send to AI extraction API
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('grant_id', grantId);
+        const res = await globalThis.fetch('/api/upload', { method: 'POST', body: formData });
+        const json = await res.json();
+        if (!res.ok) {
+          toast.error(json.error || 'Extraction failed');
+          return;
+        }
+        toast.success(`Extracted ${json.count} transaction${json.count !== 1 ? 's' : ''} from ${file.name}`);
+        loadTransactions();
       }
-      if (rows.length === 0) { toast.error('No data found in file.'); return; }
-      const records = rows.map(r => normalizeRow(r, file.name, grantId));
-      const { error } = await supabase.from('transactions').insert(records);
-      if (error) throw error;
-      toast.success(`Imported ${records.length} transactions`);
-      fetch();
     } catch (err) {
-      toast.error('Import failed. Check file format.');
+      toast.error('Import failed. Check file format and try again.');
     } finally {
       setIsUploading(false);
     }
@@ -131,7 +150,15 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    accept: { 'text/csv': ['.csv'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+    accept: {
+      'text/csv': ['.csv'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/pdf': ['.pdf'],
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/webp': ['.webp'],
+      'image/heic': ['.heic'],
+    },
     multiple: false,
     disabled: isUploading,
     onDrop: ([f]) => f && processFile(f),
@@ -156,7 +183,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
           {isUploading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : <FileUp className="h-6 w-6 text-muted-foreground" />}
           <div>
             <p className="text-sm font-medium">{isUploading ? 'Importing...' : isDragActive ? 'Drop here' : 'Upload CSV or XLSX'}</p>
-            <p className="text-xs text-muted-foreground">Transactions will be linked to this grant</p>
+            <p className="text-xs text-muted-foreground">CSV, XLSX — or PDF / JPG / PNG for AI extraction</p>
           </div>
         </div>
       </Card>

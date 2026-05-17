@@ -142,6 +142,11 @@ export default function BudgetTab({ grantId }: { grantId: string }) {
           </TableBody>
         </Table>
       </div>
+      <p className="text-xs text-muted-foreground flex gap-4">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />Under 90% spent</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />90–100% spent</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Over budget</span>
+      </p>
     </div>
   );
 }

@@ -12,7 +12,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Plus, ChevronRight, HelpCircle } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 type Org = { id: string; name: string; ein: string | null; contact_name: string | null; contact_email: string | null; address: string | null; notes: string | null };
 type Grant = { id: string; name: string; grant_number: string | null; grant_type: string; awarding_agency: string | null; funder_name: string | null; award_amount: number | null; period_start: string | null; period_end: string | null; status: string };
@@ -146,7 +147,15 @@ export default function OrgDetailPage() {
                   <Input placeholder="HUD, HHS, NSF..." {...f('awarding_agency')} />
                 </div>
                 <div className="space-y-1">
-                  <Label>CFDA / ALN Number</Label>
+                  <div className="flex items-center gap-1">
+                    <Label>CFDA / ALN Number</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild><HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" /></TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">The Assistance Listing Number from your Notice of Award (e.g. 93.600 for HHS Head Start). Used in compliance reports.</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                   <Input placeholder="14.218" {...f('cfda_number')} />
                 </div>
               </div>
@@ -174,7 +183,15 @@ export default function OrgDetailPage() {
                   <Input type="number" step="0.01" placeholder="10" {...f('indirect_cost_rate')} />
                 </div>
                 <div className="space-y-1">
-                  <Label>Rate Type</Label>
+                  <div className="flex items-center gap-1">
+                    <Label>Rate Type</Label>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild><HelpCircle className="h-3 w-3 text-muted-foreground cursor-help" /></TooltipTrigger>
+                        <TooltipContent className="max-w-xs text-xs">De Minimis (10%) is available if you've never had a negotiated rate. Otherwise use the type from your NICRA agreement with your cognizant federal agency.</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
                   <Select {...sel('indirect_cost_type')}>
                     <SelectTrigger><SelectValue placeholder="Select..." /></SelectTrigger>
                     <SelectContent>

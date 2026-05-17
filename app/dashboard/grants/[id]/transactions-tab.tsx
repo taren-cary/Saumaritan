@@ -144,6 +144,19 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
     setTransactions(ts => ts.map(t => t.id === id ? { ...t, budget_category: category || null } : t));
   }
 
+  async function updateAllowability(id: string, status: string) {
+    await supabase.from('transactions').update({ allowability_status: status }).eq('id', id);
+    setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: status } : t));
+  }
+
+  async function markAllReviewed() {
+    const pending = transactions.filter(t => t.allowability_status === 'pending_review').map(t => t.id);
+    if (pending.length === 0) { toast.info('No pending transactions to mark.'); return; }
+    await supabase.from('transactions').update({ allowability_status: 'allowable' }).in('id', pending);
+    setTransactions(ts => ts.map(t => t.allowability_status === 'pending_review' ? { ...t, allowability_status: 'allowable' } : t));
+    toast.success(`Marked ${pending.length} transaction${pending.length !== 1 ? 's' : ''} as allowable`);
+  }
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     accept: {
       'text/csv': ['.csv'],
@@ -188,6 +201,11 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        {transactions.some(t => t.allowability_status === 'pending_review') && (
+          <Button variant="outline" size="sm" onClick={markAllReviewed}>
+            Mark All Reviewed
+          </Button>
+        )}
         {filtered.length > 0 && (
           <p className="text-sm text-muted-foreground whitespace-nowrap">
             {filtered.length} rows · ${total.toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -234,9 +252,17 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
                     </Select>
                   </TableCell>
                   <TableCell>
-                    <Badge className={`text-xs ${statusStyles[t.allowability_status] ?? ''}`}>
-                      {t.allowability_status?.replace('_', ' ')}
-                    </Badge>
+                    <Select value={t.allowability_status ?? 'pending_review'} onValueChange={v => updateAllowability(t.id, v)}>
+                      <SelectTrigger className={`h-7 text-xs w-36 ${statusStyles[t.allowability_status ?? ''] ?? ''}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="pending_review">Pending Review</SelectItem>
+                        <SelectItem value="allowable">Allowable</SelectItem>
+                        <SelectItem value="questioned">Questioned</SelectItem>
+                        <SelectItem value="unallowable">Unallowable</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(t.id)}>

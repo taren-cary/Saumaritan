@@ -46,10 +46,15 @@ function ScoreRing({ score }: { score: number }) {
   const color = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-yellow-600' : 'text-red-600';
   const label = score >= 80 ? 'Compliant' : score >= 60 ? 'Needs Attention' : 'Non-Compliant';
   return (
-    <div className="flex flex-col items-center">
+    <div className="flex flex-col items-center gap-1">
       <div className={`text-5xl font-bold ${color}`}>{score}</div>
       <div className={`text-sm font-medium ${color}`}>{label}</div>
       <div className="text-xs text-muted-foreground">Compliance Score</div>
+      <div className="flex gap-2 mt-2 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />80–100</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />60–79</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />0–59</span>
+      </div>
     </div>
   );
 }
@@ -67,6 +72,7 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [readiness, setReadiness] = useState({ requirements: 0, transactions: 0 });
 
   async function fetchReports() {
     const { data } = await supabase
@@ -90,9 +96,23 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
     setIsLoading(false);
   }
 
-  useEffect(() => { fetchReports(); }, [grantId]);
+  useEffect(() => {
+    fetchReports();
+    Promise.all([
+      supabase.from('grant_requirements').select('id', { count: 'exact', head: true }).eq('grant_id', grantId).eq('is_active', true),
+      supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('grant_id', grantId),
+    ]).then(([r, t]) => setReadiness({ requirements: r.count ?? 0, transactions: t.count ?? 0 }));
+  }, [grantId]);
 
   async function handleGenerate() {
+    if (readiness.requirements === 0) {
+      toast.error('Add at least one requirement before generating a report.');
+      return;
+    }
+    if (readiness.transactions === 0) {
+      toast.error('Upload transactions before generating a report.');
+      return;
+    }
     setIsGenerating(true);
     try {
       const res = await fetch('/api/compliance', {
@@ -203,9 +223,22 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
       {isLoading ? (
         <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : reports.length === 0 ? (
-        <Card className="p-12 text-center">
-          <FileText className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-          <p className="text-sm text-muted-foreground">No reports yet. Add requirements and upload transactions, then generate your first report.</p>
+        <Card className="p-10">
+          <div className="flex flex-col items-center text-center mb-6">
+            <FileText className="h-10 w-10 text-muted-foreground mb-3" />
+            <p className="text-sm font-medium mb-1">No compliance reports yet</p>
+            <p className="text-xs text-muted-foreground">Complete the checklist below, then generate your first report.</p>
+          </div>
+          <div className="space-y-2 max-w-sm mx-auto">
+            <div className={`flex items-center gap-3 text-sm px-3 py-2 rounded-md ${readiness.requirements > 0 ? 'bg-green-50 text-green-700' : 'bg-muted text-muted-foreground'}`}>
+              <span className="text-base">{readiness.requirements > 0 ? '✓' : '○'}</span>
+              <span>{readiness.requirements > 0 ? `${readiness.requirements} requirement${readiness.requirements !== 1 ? 's' : ''} defined` : 'Add compliance requirements'}</span>
+            </div>
+            <div className={`flex items-center gap-3 text-sm px-3 py-2 rounded-md ${readiness.transactions > 0 ? 'bg-green-50 text-green-700' : 'bg-muted text-muted-foreground'}`}>
+              <span className="text-base">{readiness.transactions > 0 ? '✓' : '○'}</span>
+              <span>{readiness.transactions > 0 ? `${readiness.transactions} transaction${readiness.transactions !== 1 ? 's' : ''} uploaded` : 'Upload transactions'}</span>
+            </div>
+          </div>
         </Card>
       ) : (
         <>

@@ -78,6 +78,7 @@ export default function SettingsPage() {
               <div className="space-y-1">
                 <Label>Firm / Practice Name</Label>
                 <Input placeholder="Smith & Associates CPAs" {...f('firm_name')} />
+                <p className="text-xs text-muted-foreground">Appears in exported compliance report PDFs.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">

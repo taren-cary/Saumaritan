@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
@@ -90,19 +91,30 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [search, setSearch] = useState('');
+  const [sourceFileFilter, setSourceFileFilter] = useState('');
+  const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [noteDialogTxId, setNoteDialogTxId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
 
   const loadTransactions = useCallback(async () => {
-    const { data, count } = await supabase
-      .from('transactions')
-      .select('id,date,description,amount,vendor,budget_category,allowability_status,auditor_note,source_file', { count: 'exact' })
-      .eq('grant_id', grantId)
-      .order('date', { ascending: false, nullsFirst: false })
-      .range(0, PAGE_SIZE - 1);
-    setTransactions(data ?? []);
-    setTotalCount(count ?? 0);
-    setHasMore((count ?? 0) > PAGE_SIZE);
+    const [txRes, filesRes] = await Promise.all([
+      supabase
+        .from('transactions')
+        .select('id,date,description,amount,vendor,budget_category,allowability_status,auditor_note,source_file', { count: 'exact' })
+        .eq('grant_id', grantId)
+        .order('created_at', { ascending: false })
+        .range(0, PAGE_SIZE - 1),
+      supabase
+        .from('transactions')
+        .select('source_file')
+        .eq('grant_id', grantId)
+        .not('source_file', 'is', null),
+    ]);
+    setTransactions(txRes.data ?? []);
+    setTotalCount(txRes.count ?? 0);
+    setHasMore((txRes.count ?? 0) > PAGE_SIZE);
+    const files = [...new Set((filesRes.data ?? []).map((t: any) => t.source_file).filter(Boolean))].sort() as string[];
+    setSourceFiles(files);
     setIsLoading(false);
   }, [grantId]);
 
@@ -194,6 +206,14 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
     setNoteText('');
   }
 
+  async function deleteBySourceFile(file: string) {
+    const { error } = await supabase.from('transactions').delete().eq('grant_id', grantId).eq('source_file', file);
+    if (error) { toast.error('Failed to delete'); return; }
+    toast.success(`Deleted all transactions from "${file}"`);
+    setSourceFileFilter('');
+    loadTransactions();
+  }
+
   async function markAllReviewed() {
     const pending = transactions.filter(t => t.allowability_status === 'pending_review').map(t => t.id);
     if (pending.length === 0) { toast.info('No pending transactions to mark.'); return; }
@@ -218,6 +238,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   });
 
   const filtered = transactions.filter(t => {
+    if (sourceFileFilter && t.source_file !== sourceFileFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return t.description?.toLowerCase().includes(q) || t.vendor?.toLowerCase().includes(q) || t.source_file?.toLowerCase().includes(q);
@@ -241,12 +262,49 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
         </div>
       </Card>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        {transactions.some(t => t.allowability_status === 'pending_review') && (
+        {sourceFiles.length > 0 && (
+          <Select value={sourceFileFilter || 'all'} onValueChange={v => setSourceFileFilter(v === 'all' ? '' : v)}>
+            <SelectTrigger className="w-48 h-9 text-xs">
+              <SelectValue placeholder="All uploads" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All uploads</SelectItem>
+              {sourceFiles.map(f => (
+                <SelectItem key={f} value={f} className="text-xs max-w-[220px] truncate">{f}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {sourceFileFilter && (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" size="sm" className="text-xs">
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                Delete all from this file
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete all transactions from this file?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will permanently delete all {filtered.length} transaction{filtered.length !== 1 ? 's' : ''} uploaded from <strong>"{sourceFileFilter}"</strong>. This cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={() => deleteBySourceFile(sourceFileFilter)}>
+                  Delete {filtered.length} transaction{filtered.length !== 1 ? 's' : ''}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+        {transactions.some(t => t.allowability_status === 'pending_review') && !sourceFileFilter && (
           <Button variant="outline" size="sm" onClick={markAllReviewed}>
             Mark All Reviewed
           </Button>

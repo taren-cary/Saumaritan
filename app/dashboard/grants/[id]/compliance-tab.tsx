@@ -111,16 +111,15 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
     if (runLog.length === 0) return 'Start Compliance Analysis';
     if (hasNewTransactions) return `Run Rollforward — ${newTxCount} New Transaction${newTxCount !== 1 ? 's' : ''}`;
     if (lastRunFoundNothing) return 'Analysis Complete';
-    const pass = Math.min(passNumber, 3);
-    if (pass === 2) return 'Run Pass 2 — Deeper Analysis';
-    if (pass === 3) return 'Run Pass 3 — Final Verification';
-    return `Run Pass ${pass} — Additional Check`;
+    if (passNumber === 2) return 'Run Pass 2 — Deeper Analysis';
+    if (passNumber === 3) return 'Run Pass 3 — Final Verification';
+    return `Run Pass ${passNumber} — Extended Analysis`;
   }
 
   function getPassFocus() {
     if (hasNewTransactions) return `Testing ${newTxCount} new transaction${newTxCount !== 1 ? 's' : ''} uploaded since the last run`;
-    const idx = Math.min(passNumber - 1, PASS_FOCUS.length - 1);
-    return PASS_FOCUS[idx] ?? PASS_FOCUS[PASS_FOCUS.length - 1];
+    if (passNumber <= PASS_FOCUS.length) return PASS_FOCUS[passNumber - 1];
+    return `Pass ${passNumber} — additional sweep to ensure complete coverage of all transactions`;
   }
 
   async function handleClearAll() {

@@ -106,11 +106,10 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
 
   async function convertPDFToImages(file: File): Promise<{ blob: Blob; page: number }[]> {
     const pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
     const pages = Math.min(pdf.numPages, 10);
     const images: { blob: Blob; page: number }[] = [];
 

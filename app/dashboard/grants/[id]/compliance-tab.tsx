@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle, Download, FileText, Loader2, Lock, RefreshCw } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Download, FileText, Loader2, Lock, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 
 type Transaction = { id: string; date: string | null; description: string | null; vendor: string | null; amount: number | null };
 type Finding = {
@@ -122,6 +123,20 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
     return PASS_FOCUS[idx] ?? PASS_FOCUS[PASS_FOCUS.length - 1];
   }
 
+  async function handleClearAll() {
+    if (runLog.length === 0) return;
+    const reportIds = runLog.map(r => r.id);
+    // Delete all reports (cascades to findings + finding_transactions)
+    await supabase.from('compliance_reports').delete().in('id', reportIds);
+    // Reset questioned transactions back to pending_review
+    await supabase.from('transactions').update({ allowability_status: 'pending_review' }).eq('grant_id', grantId).eq('allowability_status', 'questioned');
+    toast.success('All reports cleared. Transactions reset to pending review.');
+    setAllFindings([]);
+    setRunLog([]);
+    setForceUnlocked(false);
+    await loadData();
+  }
+
   async function handleGenerate() {
     if (readiness.requirements === 0) { toast.error('Add at least one requirement before generating.'); return; }
     if (pendingCount === 0 && runLog.length > 0) { toast.error('No pending transactions to analyze. Upload more transactions or check the date range.'); return; }
@@ -195,6 +210,29 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
         </p>
         <div className="flex flex-col items-end gap-1.5 shrink-0">
           <div className="flex items-center gap-2">
+            {runLog.length > 0 && (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
+                    <Trash2 className="h-4 w-4 mr-2" />Clear All Reports
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Clear all compliance reports?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will permanently delete all {runLog.length} report{runLog.length !== 1 ? 's' : ''} and {allFindings.length} finding{allFindings.length !== 1 ? 's' : ''} for this grant. All questioned transactions will be reset to pending review so you can run a fresh analysis. This cannot be undone.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={handleClearAll}>
+                      Clear All Reports
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
             {allFindings.length > 0 && (
               <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting || questionedCount > 0} title={questionedCount > 0 ? `Resolve ${questionedCount} questioned transaction${questionedCount !== 1 ? 's' : ''} first` : 'Export final consolidated PDF'}>
                 {isExporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Exporting...</> : questionedCount > 0 ? <><Lock className="h-4 w-4 mr-2" />Export PDF</> : <><Download className="h-4 w-4 mr-2" />Export Final PDF</>}

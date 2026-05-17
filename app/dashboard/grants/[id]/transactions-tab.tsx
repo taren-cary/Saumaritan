@@ -82,22 +82,44 @@ function normalizeRow(row: Record<string, unknown>, filename: string, grantId: s
 }
 
 export default function TransactionsTab({ grantId }: { grantId: string }) {
+  const PAGE_SIZE = 100;
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [search, setSearch] = useState('');
   const [noteDialogTxId, setNoteDialogTxId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
 
   const loadTransactions = useCallback(async () => {
+    const { data, count } = await supabase
+      .from('transactions')
+      .select('id,date,description,amount,vendor,budget_category,allowability_status,auditor_note,source_file', { count: 'exact' })
+      .eq('grant_id', grantId)
+      .order('date', { ascending: false, nullsFirst: false })
+      .range(0, PAGE_SIZE - 1);
+    setTransactions(data ?? []);
+    setTotalCount(count ?? 0);
+    setHasMore((count ?? 0) > PAGE_SIZE);
+    setIsLoading(false);
+  }, [grantId]);
+
+  async function loadMore() {
+    setIsLoadingMore(true);
+    const from = transactions.length;
     const { data } = await supabase
       .from('transactions')
       .select('id,date,description,amount,vendor,budget_category,allowability_status,auditor_note,source_file')
       .eq('grant_id', grantId)
-      .order('date', { ascending: false, nullsFirst: false });
-    setTransactions(data ?? []);
-    setIsLoading(false);
-  }, [grantId]);
+      .order('date', { ascending: false, nullsFirst: false })
+      .range(from, from + PAGE_SIZE - 1);
+    const newList = [...transactions, ...(data ?? [])];
+    setTransactions(newList);
+    setHasMore(newList.length < totalCount);
+    setIsLoadingMore(false);
+  }
 
   useEffect(() => { loadTransactions(); }, [loadTransactions]);
 
@@ -304,7 +326,21 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
             </TableBody>
           </Table>
         )}
+        {hasMore && (
+          <div className="p-4 text-center border-t">
+            <Button variant="outline" size="sm" onClick={loadMore} disabled={isLoadingMore}>
+              {isLoadingMore
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Loading...</>
+                : `Load more (${totalCount - transactions.length} remaining)`}
+            </Button>
+          </div>
+        )}
       </Card>
+      {transactions.length > 0 && (
+        <p className="text-xs text-muted-foreground text-right">
+          Showing {transactions.length} of {totalCount} transaction{totalCount !== 1 ? 's' : ''}
+        </p>
+      )}
 
       {/* Auditor note dialog — appears when marking a transaction as Disallowed */}
       <Dialog open={!!noteDialogTxId} onOpenChange={open => { if (!open) { saveNote(); } }}>

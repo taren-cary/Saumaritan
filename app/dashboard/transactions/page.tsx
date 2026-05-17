@@ -35,10 +35,15 @@ const statusStyles: Record<string, string> = {
   disallowed: 'bg-red-100 text-red-700',
 };
 
+const PAGE_SIZE = 100;
+
 function TransactionsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -50,9 +55,9 @@ function TransactionsContent() {
       const [txRes, grantRes] = await Promise.all([
         supabase
           .from('transactions')
-          .select('id,date,description,amount,vendor,budget_category,risk_level,allowability_status,source_file,grant_id,grants(name,organizations(name))')
+          .select('id,date,description,amount,vendor,budget_category,risk_level,allowability_status,source_file,grant_id,grants(name,organizations(name))', { count: 'exact' })
           .order('created_at', { ascending: false })
-          .limit(500),
+          .range(0, PAGE_SIZE - 1),
         supabase
           .from('grants')
           .select('id,name,organization_id,organizations(name)')
@@ -60,11 +65,27 @@ function TransactionsContent() {
       ]);
       if (txRes.error) toast.error('Failed to load transactions');
       setTransactions((txRes.data ?? []) as unknown as Transaction[]);
+      setTotalCount(txRes.count ?? 0);
+      setHasMore((txRes.count ?? 0) > PAGE_SIZE);
       setGrants((grantRes.data ?? []) as unknown as Grant[]);
       setIsLoading(false);
     }
     load();
   }, []);
+
+  async function loadMore() {
+    setIsLoadingMore(true);
+    const from = transactions.length;
+    const { data } = await supabase
+      .from('transactions')
+      .select('id,date,description,amount,vendor,budget_category,risk_level,allowability_status,source_file,grant_id,grants(name,organizations(name))')
+      .order('created_at', { ascending: false })
+      .range(from, from + PAGE_SIZE - 1);
+    const newList = [...transactions, ...((data ?? []) as unknown as Transaction[])];
+    setTransactions(newList);
+    setHasMore(newList.length < totalCount);
+    setIsLoadingMore(false);
+  }
 
   const filtered = transactions.filter(t => {
     if (grantFilter !== 'all' && t.grant_id !== grantFilter) return false;
@@ -196,7 +217,21 @@ function TransactionsContent() {
             </TableBody>
           </Table>
         )}
+        {hasMore && (
+          <div className="p-4 text-center border-t">
+            <Button variant="outline" size="sm" onClick={loadMore} disabled={isLoadingMore}>
+              {isLoadingMore
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Loading...</>
+                : `Load more (${totalCount - transactions.length} remaining)`}
+            </Button>
+          </div>
+        )}
       </Card>
+      {transactions.length > 0 && (
+        <p className="text-xs text-muted-foreground text-right">
+          Showing {transactions.length.toLocaleString()} of {totalCount.toLocaleString()} transaction{totalCount !== 1 ? 's' : ''}
+        </p>
+      )}
     </div>
   );
 }

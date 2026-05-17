@@ -111,9 +111,10 @@ export async function POST(req: NextRequest) {
   const screened = transactions.map(t => ({ ...t, _flags: preScreen(t, periodStart, periodEnd) }));
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  try {
-    // ── PHASE 1: TRIAGE ──────────────────────────────────────────────────────
-    const phase1System = `You are a federal grant compliance transaction scanner. Your ONLY job right now is to flag every suspicious transaction. Do NOT write findings yet — just identify which transactions need investigation.
+  const PHASE1_CHUNK = 150;
+  const PHASE2_MAX = 200;
+
+  const phase1System = `You are a federal grant compliance transaction scanner. Your ONLY job right now is to flag every suspicious transaction. Do NOT write findings yet — just identify which transactions need investigation.
 
 Be aggressive. Over-flagging is far better than missing a violation. Include ALL pre-flagged transactions plus any others you find suspicious.
 
@@ -132,38 +133,59 @@ Flag transactions that have:
 
 Return ONLY valid JSON: { "flagged": [{ "id": "<exact transaction id>", "reason": "<why flagged>", "concern": "<unallowable|duplicate|procurement|period|documentation|budget|other>" }] }`;
 
-    const txLines = screened.map(t => {
-      const flagStr = t._flags.length > 0 ? ` [PRE-FLAGGED: ${t._flags.join(', ')}]` : '';
-      return `ID:${t.id}|${t.date || 'NO_DATE'}|"${t.description || ''}"|"${t.vendor || 'NO_VENDOR'}"|$${t.amount}|${t.budget_category || 'uncat'}${flagStr}`;
-    }).join('\n');
+  try {
+    // ── PHASE 1: CHUNKED TRIAGE ───────────────────────────────────────────────
+    // Split into chunks of 150 so large ledgers don't overflow context windows
+    const chunks: typeof screened[] = [];
+    for (let i = 0; i < screened.length; i += PHASE1_CHUNK) {
+      chunks.push(screened.slice(i, i + PHASE1_CHUNK));
+    }
 
-    const phase1Response = await openai.chat.completions.create({
-      model: 'gpt-4o',
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: phase1System },
-        { role: 'user', content: `PERIOD OF PERFORMANCE: ${grant.period_start} to ${grant.period_end}\nGRANT TYPE: ${grant.grant_type} | AGENCY: ${grant.awarding_agency || 'N/A'}\n\nSCAN ALL ${transactions.length} TRANSACTIONS:\n${txLines}` },
-      ],
-      temperature: 0.0,
-      max_tokens: 4000,
-    });
+    const globalAiFlaggedMap = new Map<string, { id: string; reason: string; concern: string }>();
 
-    const phase1Raw = phase1Response.choices[0]?.message?.content ?? '{"flagged":[]}';
-    const phase1Result = safeParseJSON(phase1Raw) ?? { flagged: [] };
-    const { flagged: aiFlagged } = phase1Result as { flagged: { id: string; reason: string; concern: string }[] };
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const chunk = chunks[ci];
+      const txLines = chunk.map(t => {
+        const flagStr = t._flags.length > 0 ? ` [PRE-FLAGGED: ${t._flags.join(', ')}]` : '';
+        return `ID:${t.id}|${t.date || 'NO_DATE'}|"${t.description || ''}"|"${t.vendor || 'NO_VENDOR'}"|$${t.amount}|${t.budget_category || 'uncat'}${flagStr}`;
+      }).join('\n');
 
-    // Merge pre-screened + AI flagged (union, no duplicates)
-    const aiFlaggedMap = new Map(aiFlagged.map(f => [f.id, f]));
+      const phase1Response = await openai.chat.completions.create({
+        model: 'gpt-4o',
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: phase1System },
+          { role: 'user', content: `PERIOD OF PERFORMANCE: ${grant.period_start} to ${grant.period_end}\nGRANT TYPE: ${grant.grant_type} | AGENCY: ${grant.awarding_agency || 'N/A'}\n\nSCAN BATCH ${ci + 1} OF ${chunks.length} (${chunk.length} transactions):\n${txLines}` },
+        ],
+        temperature: 0.0,
+        max_tokens: 4000,
+      });
+
+      const phase1Raw = phase1Response.choices[0]?.message?.content ?? '{"flagged":[]}';
+      const phase1Result = safeParseJSON(phase1Raw) ?? { flagged: [] };
+      const { flagged: aiFlagged } = phase1Result as { flagged: { id: string; reason: string; concern: string }[] };
+      for (const f of aiFlagged) {
+        if (!globalAiFlaggedMap.has(f.id)) globalAiFlaggedMap.set(f.id, f);
+      }
+    }
+
+    // Merge rule-based + AI flagged across all chunks
     const preScreenedIds = new Set(screened.filter(t => t._flags.length > 0).map(t => t.id));
-    const allFlaggedIds = new Set([...preScreenedIds, ...aiFlaggedMap.keys()]);
+    const allFlaggedIds = new Set([...preScreenedIds, ...globalAiFlaggedMap.keys()]);
 
-    const flaggedTxs = screened
+    const allFlaggedTxs = screened
       .filter(t => allFlaggedIds.has(t.id))
       .map(t => ({
         ...t,
-        _aiReason: aiFlaggedMap.get(t.id)?.reason ?? null,
-        _aiConcern: aiFlaggedMap.get(t.id)?.concern ?? null,
+        _aiReason: globalAiFlaggedMap.get(t.id)?.reason ?? null,
+        _aiConcern: globalAiFlaggedMap.get(t.id)?.concern ?? null,
       }));
+
+    // Cap Phase 2 at PHASE2_MAX — Phase 2 uses o1 which is expensive and slow
+    const flaggedTxs = allFlaggedTxs.slice(0, PHASE2_MAX);
+    if (allFlaggedTxs.length > PHASE2_MAX) {
+      console.log(`[compliance] ${allFlaggedTxs.length} flagged — capping Phase 2 at ${PHASE2_MAX}. Run again to cover the rest.`);
+    }
 
     // ── PHASE 2: GAGAS FINDINGS ───────────────────────────────────────────────
     const phase2System = `You are a senior federal grant compliance auditor generating formal GAGAS audit findings (Government Auditing Standards 2018, Yellow Book). You have been given a pre-screened list of suspicious transactions identified by both automated rules and AI triage.

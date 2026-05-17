@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { RefreshCw } from 'lucide-react';
 
 const CATEGORIES = [
   { key: 'personnel', label: 'Personnel (Salaries & Wages)' },
@@ -21,31 +22,50 @@ const CATEGORIES = [
 
 type BudgetRow = { category: string; approved: number; actual: number };
 
+const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+
 export default function BudgetTab({ grantId }: { grantId: string }) {
   const [rows, setRows] = useState<BudgetRow[]>(CATEGORIES.map(c => ({ category: c.key, approved: 0, actual: 0 })));
+  const [uncategorizedTotal, setUncategorizedTotal] = useState(0);
+  const [uncategorizedCount, setUncategorizedCount] = useState(0);
+  const [totalTransactions, setTotalTransactions] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    async function load() {
-      const [budgetRes, txRes] = await Promise.all([
-        supabase.from('budget_line_items').select('*').eq('grant_id', grantId),
-        supabase.from('transactions').select('budget_category, amount').eq('grant_id', grantId),
-      ]);
+  const loadActuals = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) setIsRefreshing(true);
+    const [budgetRes, txRes] = await Promise.all([
+      supabase.from('budget_line_items').select('*').eq('grant_id', grantId),
+      supabase.from('transactions').select('budget_category, amount').eq('grant_id', grantId),
+    ]);
 
-      const approved: Record<string, number> = {};
-      for (const b of budgetRes.data ?? []) approved[b.category] = Number(b.approved_amount);
+    const approved: Record<string, number> = {};
+    for (const b of budgetRes.data ?? []) approved[b.category] = Number(b.approved_amount);
 
-      const actual: Record<string, number> = {};
-      for (const t of txRes.data ?? []) {
-        if (t.budget_category) actual[t.budget_category] = (actual[t.budget_category] ?? 0) + Number(t.amount ?? 0);
+    const actual: Record<string, number> = {};
+    let uncatTotal = 0;
+    let uncatCount = 0;
+
+    for (const t of txRes.data ?? []) {
+      const amt = Number(t.amount ?? 0);
+      if (t.budget_category) {
+        actual[t.budget_category] = (actual[t.budget_category] ?? 0) + amt;
+      } else {
+        uncatTotal += amt;
+        uncatCount++;
       }
-
-      setRows(CATEGORIES.map(c => ({ category: c.key, approved: approved[c.key] ?? 0, actual: actual[c.key] ?? 0 })));
-      setIsLoading(false);
     }
-    load();
+
+    setRows(CATEGORIES.map(c => ({ category: c.key, approved: approved[c.key] ?? 0, actual: actual[c.key] ?? 0 })));
+    setUncategorizedTotal(uncatTotal);
+    setUncategorizedCount(uncatCount);
+    setTotalTransactions(txRes.data?.length ?? 0);
+    setIsLoading(false);
+    setIsRefreshing(false);
   }, [grantId]);
+
+  useEffect(() => { loadActuals(); }, [loadActuals]);
 
   async function handleSave() {
     setSaving(true);
@@ -58,8 +78,7 @@ export default function BudgetTab({ grantId }: { grantId: string }) {
 
   const totalApproved = rows.reduce((s, r) => s + r.approved, 0);
   const totalActual = rows.reduce((s, r) => s + r.actual, 0);
-
-  const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  const categorizedCount = totalTransactions - uncategorizedCount;
 
   const varianceColor = (approved: number, actual: number) => {
     if (approved === 0) return '';
@@ -74,12 +93,26 @@ export default function BudgetTab({ grantId }: { grantId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
-          Enter approved budget amounts per the grant award. Actual spending is pulled from uploaded transactions.
-        </p>
-        <Button size="sm" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Budget'}
-        </Button>
+        <div>
+          <p className="text-sm text-muted-foreground">
+            Enter approved budget amounts per the grant award. Actual spending is pulled from uploaded transactions.
+          </p>
+          {totalTransactions > 0 && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {categorizedCount} of {totalTransactions} transaction{totalTransactions !== 1 ? 's' : ''} categorized
+              {uncategorizedCount > 0 && <span className="text-amber-600"> · {uncategorizedCount} uncategorized (see below)</span>}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => loadActuals(true)} disabled={isRefreshing}>
+            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Budget'}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-md border">
@@ -130,11 +163,26 @@ export default function BudgetTab({ grantId }: { grantId: string }) {
             })}
           </TableBody>
           <TableBody>
+            {/* Uncategorized row */}
+            {uncategorizedCount > 0 && (
+              <TableRow className="bg-amber-50 dark:bg-amber-950/20">
+                <TableCell className="text-sm text-amber-700 font-medium italic">
+                  Uncategorized ({uncategorizedCount} transaction{uncategorizedCount !== 1 ? 's' : ''})
+                </TableCell>
+                <TableCell className="text-right text-sm text-muted-foreground">—</TableCell>
+                <TableCell className="text-right text-sm font-medium text-amber-700">{fmt(uncategorizedTotal)}</TableCell>
+                <TableCell className="text-right text-xs text-amber-600 italic">not tracked</TableCell>
+                <TableCell className="text-right text-xs text-amber-600 italic">—</TableCell>
+              </TableRow>
+            )}
+            {/* Total row */}
             <TableRow className="border-t-2 font-semibold bg-muted/30">
-              <TableCell>Total</TableCell>
+              <TableCell>Total (categorized)</TableCell>
               <TableCell className="text-right">{fmt(totalApproved)}</TableCell>
               <TableCell className="text-right">{fmt(totalActual)}</TableCell>
-              <TableCell className={`text-right ${totalActual > totalApproved ? 'text-red-600' : ''}`}>{fmt(totalApproved - totalActual)}</TableCell>
+              <TableCell className={`text-right ${totalActual > totalApproved ? 'text-red-600' : ''}`}>
+                {fmt(totalApproved - totalActual)}
+              </TableCell>
               <TableCell className="text-right">
                 {totalApproved > 0 ? `${Math.round((totalActual / totalApproved) * 100)}%` : '—'}
               </TableCell>
@@ -142,10 +190,12 @@ export default function BudgetTab({ grantId }: { grantId: string }) {
           </TableBody>
         </Table>
       </div>
+
       <p className="text-xs text-muted-foreground flex gap-4">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />Under 90% spent</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />90–100% spent</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />Over budget</span>
+        {uncategorizedCount > 0 && <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />Uncategorized — assign categories on the Transactions tab</span>}
       </p>
     </div>
   );

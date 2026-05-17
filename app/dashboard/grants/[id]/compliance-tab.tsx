@@ -1,63 +1,25 @@
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle, Download, FileText, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Download, FileText, Loader2, Lock, RefreshCw } from 'lucide-react';
 
 type Transaction = { id: string; date: string | null; description: string | null; vendor: string | null; amount: number | null };
 type Finding = {
-  id: string;
-  finding_ref: string;
-  severity: string;
-  category: string | null;
-  condition_text: string | null;
-  criteria: string | null;
-  cause: string | null;
-  effect: string | null;
-  recommendation: string | null;
-  questioned_costs: number;
-  is_repeat: boolean;
+  id: string; report_id: string; finding_ref: string; severity: string; category: string | null;
+  condition_text: string | null; criteria: string | null; cause: string | null;
+  effect: string | null; recommendation: string | null;
+  questioned_costs: number; is_repeat: boolean;
   finding_transactions: { transaction_id: string; transactions: Transaction }[];
 };
-type Report = {
-  id: string;
-  created_at: string;
-  overall_score: number;
-  total_questioned_costs: number;
-  summary: string | null;
-  status: string;
-  compliance_findings: Finding[];
-};
-
-const severityStyles: Record<string, { badge: string; border: string; label: string }> = {
-  material_weakness: { badge: 'bg-red-100 text-red-700', border: 'border-red-300', label: 'Material Weakness' },
-  significant_deficiency: { badge: 'bg-orange-100 text-orange-700', border: 'border-orange-300', label: 'Significant Deficiency' },
-  material_noncompliance: { badge: 'bg-yellow-100 text-yellow-700', border: 'border-yellow-300', label: 'Material Noncompliance' },
-  other: { badge: 'bg-blue-100 text-blue-700', border: 'border-blue-300', label: 'Other Finding' },
-};
-
-function ScoreRing({ score }: { score: number }) {
-  const color = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-yellow-600' : 'text-red-600';
-  const label = score >= 80 ? 'Compliant' : score >= 60 ? 'Needs Attention' : 'Non-Compliant';
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <div className={`text-5xl font-bold ${color}`}>{score}</div>
-      <div className={`text-sm font-medium ${color}`}>{label}</div>
-      <div className="text-xs text-muted-foreground">Compliance Score</div>
-      <div className="flex gap-2 mt-2 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />80–100</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-500 inline-block" />60–79</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />0–59</span>
-      </div>
-    </div>
-  );
-}
+type RunLog = { id: string; created_at: string; finding_count: number };
 
 interface Grant {
   name: string; grant_number: string | null; awarding_agency: string | null;
@@ -66,330 +28,302 @@ interface Grant {
   organizations: { name: string } | null;
 }
 
+const severityStyles: Record<string, { badge: string; border: string; label: string }> = {
+  material_weakness: { badge: 'bg-red-100 text-red-700', border: 'border-red-300', label: 'Material Weakness' },
+  significant_deficiency: { badge: 'bg-orange-100 text-orange-700', border: 'border-orange-300', label: 'Significant Deficiency' },
+  material_noncompliance: { badge: 'bg-yellow-100 text-yellow-700', border: 'border-yellow-300', label: 'Material Noncompliance' },
+  other: { badge: 'bg-blue-100 text-blue-700', border: 'border-blue-300', label: 'Other Finding' },
+};
+
+const fmt = (n: number) => `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+
 export default function ComplianceTab({ grantId, grant }: { grantId: string; grant: Grant }) {
-  const [reports, setReports] = useState<Report[]>([]);
-  const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [allFindings, setAllFindings] = useState<Finding[]>([]);
+  const [runLog, setRunLog] = useState<RunLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [readiness, setReadiness] = useState({ requirements: 0, transactions: 0 });
+  const [pendingCount, setPendingCount] = useState(0);
+  const [questionedCount, setQuestionedCount] = useState(0);
+  const [newTxCount, setNewTxCount] = useState(0);
+  const [forceUnlocked, setForceUnlocked] = useState(false);
+  const [dateFrom, setDateFrom] = useState(grant.period_start ?? '');
+  const [dateTo, setDateTo] = useState(grant.period_end ?? '');
 
-  async function fetchReports() {
-    const { data } = await supabase
-      .from('compliance_reports')
-      .select(`
-        *,
-        compliance_findings (
-          *,
-          finding_transactions (
-            transaction_id,
-            transactions ( id, date, description, vendor, amount )
-          )
-        )
-      `)
-      .eq('grant_id', grantId)
-      .eq('status', 'complete')
-      .order('created_at', { ascending: false });
-    const list = (data ?? []) as Report[];
-    setReports(list);
-    if (list.length > 0 && !selectedReport) setSelectedReport(list[0]);
-    setIsLoading(false);
-  }
-
-  useEffect(() => {
-    fetchReports();
-    Promise.all([
+  const loadData = useCallback(async () => {
+    const [reportsRes, reqRes, txTotalRes, pendingRes, questionedRes] = await Promise.all([
+      supabase.from('compliance_reports').select('id, created_at').eq('grant_id', grantId).eq('status', 'complete').order('created_at', { ascending: false }),
       supabase.from('grant_requirements').select('id', { count: 'exact', head: true }).eq('grant_id', grantId).eq('is_active', true),
       supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('grant_id', grantId),
-    ]).then(([r, t]) => setReadiness({ requirements: r.count ?? 0, transactions: t.count ?? 0 }));
+      supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('grant_id', grantId).eq('allowability_status', 'pending_review'),
+      supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('grant_id', grantId).eq('allowability_status', 'questioned'),
+    ]);
+
+    const reports = reportsRes.data ?? [];
+    setReadiness({ requirements: reqRes.count ?? 0, transactions: txTotalRes.count ?? 0 });
+    setPendingCount(pendingRes.count ?? 0);
+    setQuestionedCount(questionedRes.count ?? 0);
+
+    const lastRunAt = reports[0]?.created_at ?? null;
+    if (lastRunAt) {
+      const { count } = await supabase.from('transactions').select('id', { count: 'exact', head: true }).eq('grant_id', grantId).eq('allowability_status', 'pending_review').gt('created_at', lastRunAt);
+      setNewTxCount(count ?? 0);
+    } else {
+      setNewTxCount(0);
+    }
+
+    if (reports.length === 0) { setIsLoading(false); return; }
+
+    const reportIds = reports.map(r => r.id);
+    const [findingsRes, ...countResults] = await Promise.all([
+      supabase.from('compliance_findings').select('*, finding_transactions(transaction_id, transactions(id, date, description, vendor, amount))').in('report_id', reportIds).order('created_at', { ascending: true }),
+      ...reports.map(r => supabase.from('compliance_findings').select('id', { count: 'exact', head: true }).eq('report_id', r.id)),
+    ]);
+
+    setAllFindings((findingsRes.data ?? []) as Finding[]);
+    setRunLog(reports.map((r, i) => ({ id: r.id, created_at: r.created_at, finding_count: countResults[i].count ?? 0 })));
+    setIsLoading(false);
   }, [grantId]);
 
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const lastRunFoundNothing = runLog.length > 0 && runLog[0].finding_count === 0;
+  const hasNewTransactions = newTxCount > 0;
+  const isLocked = lastRunFoundNothing && !hasNewTransactions && !forceUnlocked;
+
+  function getButtonLabel() {
+    if (runLog.length === 0) return 'Generate Compliance Report';
+    if (hasNewTransactions) return `Run Rollforward (${newTxCount} new)`;
+    if (lastRunFoundNothing) return 'All Issues Identified';
+    return 'Run Again for More Accuracy';
+  }
+
   async function handleGenerate() {
-    if (readiness.requirements === 0) {
-      toast.error('Add at least one requirement before generating a report.');
-      return;
-    }
-    if (readiness.transactions === 0) {
-      toast.error('Upload transactions before generating a report.');
-      return;
-    }
+    if (readiness.requirements === 0) { toast.error('Add at least one requirement before generating.'); return; }
+    if (pendingCount === 0 && runLog.length > 0) { toast.error('No pending transactions to analyze. Upload more transactions or check the date range.'); return; }
+    if (readiness.transactions === 0) { toast.error('Upload transactions before running a compliance check.'); return; }
+    setForceUnlocked(false);
     setIsGenerating(true);
     try {
       const res = await fetch('/api/compliance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ grant_id: grantId }),
+        body: JSON.stringify({ grant_id: grantId, date_from: dateFrom || null, date_to: dateTo || null }),
       });
       const json = await res.json();
-      if (!res.ok) {
-        toast.error(json.error || 'Generation failed');
-        return;
-      }
-      toast.success('Compliance report generated');
-      await fetchReports();
+      if (!res.ok) { toast.error(json.error || 'Generation failed'); return; }
+      const newFindings = json.stats?.findingsGenerated ?? 0;
+      if (newFindings === 0) toast.info('No new issues found. Try uploading more transactions or run again.');
+      else toast.success(`${newFindings} new finding${newFindings !== 1 ? 's' : ''} identified`);
+      await loadData();
     } catch {
-      toast.error('Failed to generate report. Check your OpenAI API key in .env');
+      toast.error('Failed to generate. Check your OpenAI API key in .env');
     } finally {
       setIsGenerating(false);
     }
   }
 
-  async function handleDelete(reportId: string) {
-    const { error } = await supabase.from('compliance_reports').delete().eq('id', reportId);
-    if (error) { toast.error('Failed to delete report'); return; }
-    toast.success('Report deleted');
-    const updated = reports.filter(r => r.id !== reportId);
-    setReports(updated);
-    setSelectedReport(updated[0] ?? null);
-  }
-
   async function handleExport() {
-    if (!selectedReport) return;
     setIsExporting(true);
     try {
       const { data: settings } = await supabase.from('app_settings').select('firm_name, auditor_name').eq('id', 1).single();
       const { pdf } = await import('@react-pdf/renderer');
       const { ComplianceReportPDF } = await import('./compliance-export');
-      const blob = await pdf(
-        ComplianceReportPDF({
-          report: selectedReport,
-          grant,
-          firmName: settings?.firm_name ?? undefined,
-          auditorName: settings?.auditor_name ?? undefined,
-        })
-      ).toBlob();
+      const consolidated = {
+        id: 'final', created_at: new Date().toISOString(),
+        overall_score: Math.max(0, 100 - Math.min(100, Math.round(allFindings.length * 4))),
+        total_questioned_costs: allFindings.reduce((s, f) => s + (Number(f.questioned_costs) || 0), 0),
+        summary: `Final consolidated report. ${allFindings.length} finding${allFindings.length !== 1 ? 's' : ''} identified across ${runLog.length} compliance run${runLog.length !== 1 ? 's' : ''}. Total questioned costs: ${fmt(allFindings.reduce((s, f) => s + (Number(f.questioned_costs) || 0), 0))}.`,
+        status: 'complete', compliance_findings: allFindings,
+      };
+      const blob = await pdf(ComplianceReportPDF({ report: consolidated as any, grant, firmName: settings?.firm_name ?? undefined, auditorName: settings?.auditor_name ?? undefined })).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const dateStr = new Date(selectedReport.created_at).toISOString().split('T')[0];
-      a.download = `${grant.name.replace(/[^a-z0-9]/gi, '-')}-compliance-${dateStr}.pdf`;
+      a.download = `${grant.name.replace(/[^a-z0-9]/gi, '-')}-final-compliance-report.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error(err);
-      toast.error('Export failed');
-    } finally {
-      setIsExporting(false);
-    }
+    } catch (err) { console.error(err); toast.error('Export failed'); }
+    finally { setIsExporting(false); }
   }
 
-  const report = selectedReport;
-  const findings = report?.compliance_findings ?? [];
-  const totalQC = findings.reduce((s, f) => s + (Number(f.questioned_costs) || 0), 0);
+  const totalQC = allFindings.reduce((s, f) => s + (Number(f.questioned_costs) || 0), 0);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            AI analyzes all transactions against grant requirements and generates GAGAS-compliant findings with citations.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {selectedReport && (
-            <>
-              <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting}>
-                {isExporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Exporting...</> : <><Download className="h-4 w-4 mr-2" />Export PDF</>}
+    <div className="space-y-5">
+      {/* Header row */}
+      <div className="flex items-start justify-between gap-4">
+        <p className="text-sm text-muted-foreground">
+          Findings accumulate across runs. Keep generating until no new issues are found, then resolve questioned transactions and export the final report.
+        </p>
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <div className="flex items-center gap-2">
+            {allFindings.length > 0 && (
+              <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting || questionedCount > 0} title={questionedCount > 0 ? `Resolve ${questionedCount} questioned transaction${questionedCount !== 1 ? 's' : ''} first` : 'Export final consolidated PDF'}>
+                {isExporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Exporting...</> : questionedCount > 0 ? <><Lock className="h-4 w-4 mr-2" />Export PDF</> : <><Download className="h-4 w-4 mr-2" />Export Final PDF</>}
               </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive">
-                    <Trash2 className="h-4 w-4 mr-2" />Delete
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Delete this report?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will permanently delete the compliance report and all its findings. This cannot be undone.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction className="bg-destructive hover:bg-destructive/90" onClick={() => handleDelete(selectedReport.id)}>
-                      Delete Report
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </>
+            )}
+            <Button onClick={handleGenerate} disabled={isGenerating || isLocked} variant={isLocked ? 'secondary' : 'default'}>
+              {isGenerating
+                ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Analyzing...</>
+                : isLocked
+                  ? <><CheckCircle className="h-4 w-4 mr-2 text-green-600" />All Issues Identified</>
+                  : <><RefreshCw className="h-4 w-4 mr-2" />{getButtonLabel()}</>
+              }
+            </Button>
+          </div>
+          {isLocked && !isGenerating && (
+            <button onClick={() => setForceUnlocked(true)} className="text-xs text-muted-foreground hover:underline">
+              Run again anyway →
+            </button>
           )}
-          <Button onClick={handleGenerate} disabled={isGenerating}>
-            {isGenerating ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : <><RefreshCw className="h-4 w-4 mr-2" />Generate Report</>}
-          </Button>
         </div>
       </div>
 
+      {/* Date range picker */}
+      <div className="flex items-center gap-3 bg-muted/30 border rounded-lg px-4 py-2.5">
+        <span className="text-xs font-medium text-muted-foreground shrink-0">Test period:</span>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs text-muted-foreground">From</Label>
+          <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-7 text-xs w-36" />
+        </div>
+        <div className="flex items-center gap-1.5">
+          <Label className="text-xs text-muted-foreground">To</Label>
+          <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-7 text-xs w-36" />
+        </div>
+        {(dateFrom !== (grant.period_start ?? '') || dateTo !== (grant.period_end ?? '')) && (
+          <Button variant="ghost" size="sm" className="text-xs h-7 text-muted-foreground" onClick={() => { setDateFrom(grant.period_start ?? ''); setDateTo(grant.period_end ?? ''); }}>
+            Reset ×
+          </Button>
+        )}
+      </div>
+
+      {/* Banners */}
+      {hasNewTransactions && runLog.length > 0 && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 text-sm text-blue-700">
+          <RefreshCw className="h-4 w-4 shrink-0" />
+          <span><strong>{newTxCount}</strong> new transaction{newTxCount !== 1 ? 's' : ''} uploaded since last run — rollforward testing available.</span>
+        </div>
+      )}
+      {questionedCount > 0 && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 text-sm text-amber-700">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span><strong>{questionedCount}</strong> transaction{questionedCount !== 1 ? 's' : ''} marked Questioned — review with the nonprofit and mark each as <strong>Cleared</strong> or <strong>Disallowed</strong> to unlock the final export.</span>
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center p-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-      ) : reports.length === 0 ? (
+      ) : runLog.length === 0 ? (
         <Card className="p-10">
           <div className="flex flex-col items-center text-center mb-6">
             <FileText className="h-10 w-10 text-muted-foreground mb-3" />
-            <p className="text-sm font-medium mb-1">No compliance reports yet</p>
-            <p className="text-xs text-muted-foreground">Complete the checklist below, then generate your first report.</p>
+            <p className="text-sm font-medium mb-1">No compliance checks run yet</p>
+            <p className="text-xs text-muted-foreground">Complete the checklist below then generate your first report.</p>
           </div>
           <div className="space-y-2 max-w-sm mx-auto">
-            <div className={`flex items-center gap-3 text-sm px-3 py-2 rounded-md ${readiness.requirements > 0 ? 'bg-green-50 text-green-700' : 'bg-muted text-muted-foreground'}`}>
-              <span className="text-base">{readiness.requirements > 0 ? '✓' : '○'}</span>
-              <span>{readiness.requirements > 0 ? `${readiness.requirements} requirement${readiness.requirements !== 1 ? 's' : ''} defined` : 'Add compliance requirements'}</span>
-            </div>
-            <div className={`flex items-center gap-3 text-sm px-3 py-2 rounded-md ${readiness.transactions > 0 ? 'bg-green-50 text-green-700' : 'bg-muted text-muted-foreground'}`}>
-              <span className="text-base">{readiness.transactions > 0 ? '✓' : '○'}</span>
-              <span>{readiness.transactions > 0 ? `${readiness.transactions} transaction${readiness.transactions !== 1 ? 's' : ''} uploaded` : 'Upload transactions'}</span>
-            </div>
+            {[
+              { done: readiness.requirements > 0, text: readiness.requirements > 0 ? `${readiness.requirements} requirement${readiness.requirements !== 1 ? 's' : ''} defined` : 'Add compliance requirements' },
+              { done: readiness.transactions > 0, text: readiness.transactions > 0 ? `${readiness.transactions} transaction${readiness.transactions !== 1 ? 's' : ''} uploaded` : 'Upload transactions' },
+            ].map((item, i) => (
+              <div key={i} className={`flex items-center gap-3 text-sm px-3 py-2 rounded-md ${item.done ? 'bg-green-50 text-green-700' : 'bg-muted text-muted-foreground'}`}>
+                <span>{item.done ? '✓' : '○'}</span>
+                <span>{item.text}</span>
+              </div>
+            ))}
           </div>
         </Card>
       ) : (
-        <>
-          {reports.length > 1 && (
-            <div className="flex gap-2 flex-wrap">
-              {reports.map(r => (
-                <Button
-                  key={r.id}
-                  size="sm"
-                  variant={selectedReport?.id === r.id ? 'secondary' : 'outline'}
-                  onClick={() => setSelectedReport(r)}
-                >
-                  {new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                </Button>
-              ))}
-            </div>
-          )}
-
-          {report && (
-            <div className="space-y-6">
-              {/* Summary row */}
-              <div className="grid grid-cols-3 gap-4">
-                <Card className="p-6 flex items-center justify-center">
-                  <ScoreRing score={report.overall_score ?? 0} />
-                </Card>
-                <Card className="p-6">
-                  <div className="text-2xl font-bold text-red-600">
-                    ${Number(report.total_questioned_costs || totalQC).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+        <div className="space-y-6">
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-4">
+            <Card className="p-5">
+              <div className="text-3xl font-bold text-red-600">{fmt(totalQC)}</div>
+              <div className="text-sm text-muted-foreground mt-1">Total Questioned Costs</div>
+            </Card>
+            <Card className="p-5">
+              <div className="text-3xl font-bold">{allFindings.length}</div>
+              <div className="text-sm text-muted-foreground mt-1">Total Findings</div>
+              <div className="text-xs text-muted-foreground">{pendingCount} transaction{pendingCount !== 1 ? 's' : ''} pending review</div>
+            </Card>
+            <Card className="p-5">
+              <div className="text-sm font-medium mb-2">Run History</div>
+              <div className="space-y-1.5 max-h-24 overflow-y-auto">
+                {runLog.map(run => (
+                  <div key={run.id} className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">{new Date(run.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className={`font-medium ${run.finding_count === 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {run.finding_count === 0 ? '✓ No new issues' : `+${run.finding_count} finding${run.finding_count !== 1 ? 's' : ''}`}
+                    </span>
                   </div>
-                  <div className="text-sm text-muted-foreground">Total Questioned Costs</div>
-                  <div className="text-xs text-muted-foreground mt-1">{findings.length} finding{findings.length !== 1 ? 's' : ''}</div>
-                </Card>
-                <Card className="p-6">
-                  <div className="text-sm font-medium mb-2">Finding Summary</div>
-                  {['material_weakness','significant_deficiency','material_noncompliance','other'].map(s => {
-                    const count = findings.filter(f => f.severity === s).length;
-                    if (!count) return null;
-                    return (
-                      <div key={s} className="flex items-center justify-between text-xs mb-1">
-                        <Badge className={`${severityStyles[s]?.badge} text-xs`}>{severityStyles[s]?.label}</Badge>
-                        <span className="font-medium">{count}</span>
-                      </div>
-                    );
-                  })}
-                  {findings.length === 0 && <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle className="h-3 w-3" />No findings</p>}
-                </Card>
+                ))}
               </div>
+            </Card>
+          </div>
 
-              {report.summary && (
-                <Card className="p-4 bg-muted/30">
-                  <p className="text-sm">{report.summary}</p>
-                </Card>
-              )}
-
-              {/* Findings */}
-              {findings.length > 0 && (
-                <div className="space-y-4">
-                  <h3 className="font-semibold text-lg">Schedule of Findings</h3>
-                  {findings.map((f) => {
-                    const style = severityStyles[f.severity] ?? severityStyles.other;
-                    const txs = f.finding_transactions?.map(ft => ft.transactions).filter(Boolean) ?? [];
-                    return (
-                      <Card key={f.id} className={`border-l-4 ${style.border}`}>
-                        <CardHeader className="pb-3">
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-mono font-bold text-sm">{f.finding_ref}</span>
-                              <Badge className={style.badge}>{style.label}</Badge>
-                              {f.category && <Badge variant="outline" className="text-xs">{f.category}</Badge>}
-                              {f.is_repeat && <Badge className="bg-purple-100 text-purple-700 text-xs">Repeat Finding</Badge>}
-                            </div>
-                            {f.questioned_costs > 0 && (
-                              <div className="text-right shrink-0">
-                                <div className="text-sm font-bold text-red-600">
-                                  ${Number(f.questioned_costs).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-xs text-muted-foreground">questioned</div>
-                              </div>
-                            )}
+          {/* Findings */}
+          {allFindings.length > 0 ? (
+            <div className="space-y-4">
+              <h3 className="font-semibold text-lg">Schedule of Findings — Cumulative ({allFindings.length})</h3>
+              {[...allFindings].reverse().map(f => {
+                const style = severityStyles[f.severity] ?? severityStyles.other;
+                const txs = f.finding_transactions?.map(ft => ft.transactions).filter(Boolean) ?? [];
+                const runDate = runLog.find(r => r.id === f.report_id)?.created_at;
+                return (
+                  <Card key={f.id} className={`border-l-4 ${style.border}`}>
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-bold text-sm">{f.finding_ref}</span>
+                          <Badge className={style.badge}>{style.label}</Badge>
+                          {f.category && <Badge variant="outline" className="text-xs">{f.category}</Badge>}
+                          {f.is_repeat && <Badge className="bg-purple-100 text-purple-700 text-xs">Repeat</Badge>}
+                          {runDate && <span className="text-xs text-muted-foreground border-l pl-2 ml-1">Found {new Date(runDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>}
+                        </div>
+                        {f.questioned_costs > 0 && (
+                          <div className="text-right shrink-0">
+                            <div className="text-sm font-bold text-red-600">{fmt(f.questioned_costs)}</div>
+                            <div className="text-xs text-muted-foreground">questioned</div>
                           </div>
-                        </CardHeader>
-                        <CardContent className="space-y-3 pt-0">
-                          {f.condition_text && (
-                            <div>
-                              <p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Condition</p>
-                              <p className="text-sm">{f.condition_text}</p>
-                            </div>
-                          )}
-                          {f.criteria && (
-                            <div>
-                              <p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Criteria</p>
-                              <p className="text-sm bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded px-3 py-2">
-                                {f.criteria}
-                              </p>
-                            </div>
-                          )}
-                          {f.cause && (
-                            <div>
-                              <p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Cause</p>
-                              <p className="text-sm">{f.cause}</p>
-                            </div>
-                          )}
-                          {f.effect && (
-                            <div>
-                              <p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Effect</p>
-                              <p className="text-sm">{f.effect}</p>
-                            </div>
-                          )}
-                          {f.recommendation && (
-                            <div>
-                              <p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Recommendation</p>
-                              <p className="text-sm">{f.recommendation}</p>
-                            </div>
-                          )}
-                          {txs.length > 0 && (
-                            <div>
-                              <Separator className="my-2" />
-                              <p className="text-xs font-semibold uppercase text-muted-foreground mb-1.5">
-                                Cited Transactions ({txs.length})
-                              </p>
-                              <div className="space-y-1">
-                                {txs.map(t => (
-                                  <div key={t.id} className="flex items-center gap-3 text-xs bg-muted/50 rounded px-2.5 py-1.5 font-mono">
-                                    <span className="text-muted-foreground">{t.date ?? '—'}</span>
-                                    <span className="flex-1 truncate">{t.description ?? '—'}</span>
-                                    <span className="text-muted-foreground">{t.vendor ?? '—'}</span>
-                                    <span className="font-semibold">
-                                      {t.amount != null ? `$${Number(t.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}` : '—'}
-                                    </span>
-                                  </div>
-                                ))}
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3 pt-0">
+                      {f.condition_text && <div><p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Condition</p><p className="text-sm">{f.condition_text}</p></div>}
+                      {f.criteria && <div><p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Criteria</p><p className="text-sm bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded px-3 py-2">{f.criteria}</p></div>}
+                      {f.cause && <div><p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Cause</p><p className="text-sm">{f.cause}</p></div>}
+                      {f.effect && <div><p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Effect</p><p className="text-sm">{f.effect}</p></div>}
+                      {f.recommendation && <div><p className="text-xs font-semibold uppercase text-muted-foreground mb-0.5">Recommendation</p><p className="text-sm">{f.recommendation}</p></div>}
+                      {txs.length > 0 && (
+                        <div>
+                          <Separator className="my-2" />
+                          <p className="text-xs font-semibold uppercase text-muted-foreground mb-1.5">Cited Transactions ({txs.length})</p>
+                          <div className="space-y-1">
+                            {txs.map(t => (
+                              <div key={t.id} className="flex items-center gap-3 text-xs bg-muted/50 rounded px-2.5 py-1.5 font-mono">
+                                <span className="text-muted-foreground">{t.date ?? '—'}</span>
+                                <span className="flex-1 truncate">{t.description ?? '—'}</span>
+                                <span className="text-muted-foreground">{t.vendor ?? '—'}</span>
+                                <span className="font-semibold">{t.amount != null ? fmt(t.amount) : '—'}</span>
                               </div>
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              )}
-
-              {findings.length === 0 && (
-                <Card className="p-8 text-center">
-                  <CheckCircle className="h-8 w-8 mx-auto text-green-500 mb-2" />
-                  <p className="text-sm font-medium text-green-600">No findings identified</p>
-                  <p className="text-xs text-muted-foreground mt-1">All reviewed transactions appear compliant with the defined grant requirements.</p>
-                </Card>
-              )}
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
+          ) : (
+            <Card className="p-8 text-center">
+              <CheckCircle className="h-8 w-8 mx-auto text-green-500 mb-2" />
+              <p className="text-sm font-medium text-green-600">No findings identified yet</p>
+              <p className="text-xs text-muted-foreground mt-1">Run the compliance check to begin analyzing transactions.</p>
+            </Card>
           )}
-        </>
+        </div>
       )}
     </div>
   );

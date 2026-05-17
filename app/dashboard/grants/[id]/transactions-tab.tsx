@@ -27,18 +27,19 @@ type Transaction = {
 
 const BUDGET_CATEGORIES = ['personnel','fringe','travel','equipment','supplies','contractual','other_direct','indirect'];
 
+const statusStyles: Record<string, string> = {
+  pending_review: 'bg-gray-100 text-gray-600',
+  questioned: 'bg-yellow-100 text-yellow-700',
+  cleared: 'bg-green-100 text-green-700',
+  disallowed: 'bg-red-100 text-red-700',
+};
+
 const riskStyles: Record<string, string> = {
   low: 'bg-green-100 text-green-700',
   medium: 'bg-yellow-100 text-yellow-700',
   high: 'bg-red-100 text-red-700',
 };
 
-const statusStyles: Record<string, string> = {
-  pending_review: 'bg-gray-100 text-gray-600',
-  allowable: 'bg-green-100 text-green-700',
-  questioned: 'bg-yellow-100 text-yellow-700',
-  unallowable: 'bg-red-100 text-red-700',
-};
 
 function getRiskLevel(amount: number | null): 'low' | 'medium' | 'high' {
   if (!amount || amount < 500) return 'low';
@@ -152,9 +153,9 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   async function markAllReviewed() {
     const pending = transactions.filter(t => t.allowability_status === 'pending_review').map(t => t.id);
     if (pending.length === 0) { toast.info('No pending transactions to mark.'); return; }
-    await supabase.from('transactions').update({ allowability_status: 'allowable' }).in('id', pending);
-    setTransactions(ts => ts.map(t => t.allowability_status === 'pending_review' ? { ...t, allowability_status: 'allowable' } : t));
-    toast.success(`Marked ${pending.length} transaction${pending.length !== 1 ? 's' : ''} as allowable`);
+    await supabase.from('transactions').update({ allowability_status: 'cleared' }).in('id', pending);
+    setTransactions(ts => ts.map(t => t.allowability_status === 'pending_review' ? { ...t, allowability_status: 'cleared' } : t));
+    toast.success(`Marked ${pending.length} transaction${pending.length !== 1 ? 's' : ''} as Cleared`);
   }
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -258,9 +259,9 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="pending_review">Pending Review</SelectItem>
-                        <SelectItem value="allowable">Allowable</SelectItem>
                         <SelectItem value="questioned">Questioned</SelectItem>
-                        <SelectItem value="unallowable">Unallowable</SelectItem>
+                        <SelectItem value="cleared">Cleared</SelectItem>
+                        <SelectItem value="disallowed">Disallowed</SelectItem>
                       </SelectContent>
                     </Select>
                   </TableCell>

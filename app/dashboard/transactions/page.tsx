@@ -30,9 +30,9 @@ type Grant = { id: string; name: string; organization_id: string; organizations:
 
 const statusStyles: Record<string, string> = {
   pending_review: 'bg-gray-100 text-gray-600',
-  allowable: 'bg-green-100 text-green-700',
   questioned: 'bg-yellow-100 text-yellow-700',
-  unallowable: 'bg-red-100 text-red-700',
+  cleared: 'bg-green-100 text-green-700',
+  disallowed: 'bg-red-100 text-red-700',
 };
 
 function TransactionsContent() {
@@ -111,8 +111,8 @@ function TransactionsContent() {
           <SelectContent>
             <SelectItem value="all">All Statuses</SelectItem>
             <SelectItem value="questioned">Questioned</SelectItem>
-            <SelectItem value="unallowable">Unallowable</SelectItem>
-            <SelectItem value="allowable">Allowable</SelectItem>
+            <SelectItem value="cleared">Cleared</SelectItem>
+            <SelectItem value="disallowed">Disallowed</SelectItem>
             <SelectItem value="pending_review">Pending Review</SelectItem>
           </SelectContent>
         </Select>

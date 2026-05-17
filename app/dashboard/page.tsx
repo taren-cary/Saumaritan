@@ -24,7 +24,7 @@ export default function DashboardPage() {
       if (!error && data) {
         setStats({
           totalTransactions: data.length,
-          flaggedTransactions: data.filter((t) => t.allowability_status === 'questioned' || t.allowability_status === 'unallowable').length,
+          flaggedTransactions: data.filter((t) => t.allowability_status === 'questioned' || t.allowability_status === 'disallowed').length,
           totalAmount: data.reduce((sum, t) => sum + (t.amount ?? 0), 0),
         });
       }

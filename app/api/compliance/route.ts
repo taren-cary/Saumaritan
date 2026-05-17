@@ -64,17 +64,23 @@ function preScreen(t: any, periodStart: Date | null, periodEnd: Date | null): st
 }
 
 export async function POST(req: NextRequest) {
-  const { grant_id } = await req.json();
+  const { grant_id, date_from, date_to } = await req.json();
   if (!grant_id) return NextResponse.json({ error: 'grant_id required' }, { status: 400 });
 
   if (!process.env.OPENAI_API_KEY || process.env.OPENAI_API_KEY === 'your-openai-api-key-here') {
     return NextResponse.json({ error: 'OPENAI_API_KEY not configured in .env' }, { status: 500 });
   }
 
+  // Build transaction query — only pending_review, optionally filtered by date range
+  let txQuery = supabase.from('transactions').select('*').eq('grant_id', grant_id).eq('allowability_status', 'pending_review');
+  if (date_from) txQuery = txQuery.gte('date', date_from);
+  if (date_to) txQuery = txQuery.lte('date', date_to);
+  txQuery = txQuery.order('date', { ascending: true });
+
   const [grantRes, reqRes, txRes, budgetRes] = await Promise.all([
     supabase.from('grants').select('*, organizations(name)').eq('id', grant_id).single(),
     supabase.from('grant_requirements').select('*').eq('grant_id', grant_id).eq('is_active', true),
-    supabase.from('transactions').select('*').eq('grant_id', grant_id).order('date', { ascending: true }),
+    txQuery,
     supabase.from('budget_line_items').select('*').eq('grant_id', grant_id),
   ]);
 

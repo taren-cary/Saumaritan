@@ -94,50 +94,14 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
 
   useEffect(() => { loadTransactions(); }, [loadTransactions]);
 
-  async function sendImageToAPI(imageFile: File | Blob, filename: string): Promise<number> {
-    const formData = new FormData();
-    formData.append('file', imageFile, filename);
-    formData.append('grant_id', grantId);
-    const res = await globalThis.fetch('/api/upload', { method: 'POST', body: formData });
-    const json = await res.json();
-    if (!res.ok) throw new Error(json.error || 'Extraction failed');
-    return json.count ?? 0;
-  }
-
-  async function convertPDFToImages(file: File): Promise<{ blob: Blob; page: number }[]> {
-    const pdfjsLib = await import('pdfjs-dist');
-    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
-
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
-    const pages = Math.min(pdf.numPages, 10);
-    const images: { blob: Blob; page: number }[] = [];
-
-    for (let i = 1; i <= pages; i++) {
-      const page = await pdf.getPage(i);
-      const viewport = page.getViewport({ scale: 2.0 });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      const ctx = canvas.getContext('2d')!;
-      await page.render({ canvasContext: ctx, viewport, canvas } as any).promise;
-      const blob = await new Promise<Blob>(resolve => canvas.toBlob(b => resolve(b!), 'image/png'));
-      images.push({ blob, page: i });
-    }
-    return images;
-  }
-
   async function processFile(file: File) {
     setIsUploading(true);
     try {
       const name = file.name.toLowerCase();
-      const isCSV = name.endsWith('.csv');
-      const isXLSX = name.endsWith('.xlsx');
-      const isPDF = name.endsWith('.pdf');
 
-      if (isCSV || isXLSX) {
+      if (name.endsWith('.csv') || name.endsWith('.xlsx')) {
         let rows: Record<string, unknown>[] = [];
-        if (isCSV) {
+        if (name.endsWith('.csv')) {
           const text = await file.text();
           const result = Papa.parse<Record<string, unknown>>(text, { header: true, skipEmptyLines: true });
           rows = result.data;
@@ -152,21 +116,15 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
         if (error) throw error;
         toast.success(`Imported ${records.length} transactions from ${file.name}`);
         loadTransactions();
-      } else if (isPDF) {
-        // Convert PDF pages to images client-side, then send each to vision API
-        toast.info('Converting PDF pages...');
-        const images = await convertPDFToImages(file);
-        let total = 0;
-        for (const { blob, page } of images) {
-          const count = await sendImageToAPI(blob, `${file.name}-page${page}.png`);
-          total += count;
-        }
-        toast.success(`Extracted ${total} transaction${total !== 1 ? 's' : ''} from ${file.name} (${images.length} page${images.length !== 1 ? 's' : ''})`);
-        loadTransactions();
       } else {
-        // Image — send directly to vision API
-        const count = await sendImageToAPI(file, file.name);
-        toast.success(`Extracted ${count} transaction${count !== 1 ? 's' : ''} from ${file.name}`);
+        // PDF or image — send to server for AI extraction
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('grant_id', grantId);
+        const res = await globalThis.fetch('/api/upload', { method: 'POST', body: formData });
+        const json = await res.json();
+        if (!res.ok) { toast.error(json.error || 'Extraction failed'); return; }
+        toast.success(`Extracted ${json.count} transaction${json.count !== 1 ? 's' : ''} from ${file.name}`);
         loadTransactions();
       }
     } catch (err: any) {
@@ -220,7 +178,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
           {isUploading ? <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /> : <FileUp className="h-6 w-6 text-muted-foreground" />}
           <div>
             <p className="text-sm font-medium">{isUploading ? 'Importing...' : isDragActive ? 'Drop here' : 'Upload CSV or XLSX'}</p>
-            <p className="text-xs text-muted-foreground">CSV, XLSX — or PDF / JPG / PNG for AI extraction</p>
+            <p className="text-xs text-muted-foreground">CSV, XLSX — or PDF, JPG, PNG for AI extraction</p>
           </div>
         </div>
       </Card>

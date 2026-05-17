@@ -20,11 +20,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function fetchStats() {
-      const { data, error } = await supabase.from('transactions').select('amount, risk_level');
+      const { data, error } = await supabase.from('transactions').select('amount, allowability_status');
       if (!error && data) {
         setStats({
           totalTransactions: data.length,
-          flaggedTransactions: data.filter((t) => t.risk_level === 'high').length,
+          flaggedTransactions: data.filter((t) => t.allowability_status === 'questioned' || t.allowability_status === 'unallowable').length,
           totalAmount: data.reduce((sum, t) => sum + (t.amount ?? 0), 0),
         });
       }
@@ -56,10 +56,10 @@ export default function DashboardPage() {
 
         <Card
           className="cursor-pointer hover:shadow-md transition-shadow"
-          onClick={() => router.push('/dashboard/transactions')}
+          onClick={() => router.push('/dashboard/transactions?status=questioned')}
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">High Risk Transactions</CardTitle>
+            <CardTitle className="text-sm font-medium">Flagged Transactions</CardTitle>
             <AlertTriangle className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
@@ -84,12 +84,12 @@ export default function DashboardPage() {
         <Alert>
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            {stats.flaggedTransactions} high-risk transaction{stats.flaggedTransactions !== 1 ? 's' : ''} need review.{' '}
+            {stats.flaggedTransactions} transaction{stats.flaggedTransactions !== 1 ? 's' : ''} flagged by compliance reports need review.{' '}
             <button
-              onClick={() => router.push('/dashboard/transactions')}
+              onClick={() => router.push('/dashboard/transactions?status=questioned')}
               className="underline font-medium hover:no-underline"
             >
-              View transactions →
+              View flagged transactions →
             </button>
           </AlertDescription>
         </Alert>

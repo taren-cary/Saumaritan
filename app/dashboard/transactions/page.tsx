@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,13 +35,15 @@ const statusStyles: Record<string, string> = {
   unallowable: 'bg-red-100 text-red-700',
 };
 
-export default function TransactionsPage() {
+function TransactionsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [grants, setGrants] = useState<Grant[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [grantFilter, setGrantFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? 'all');
 
   useEffect(() => {
     async function load() {
@@ -66,6 +68,7 @@ export default function TransactionsPage() {
 
   const filtered = transactions.filter(t => {
     if (grantFilter !== 'all' && t.grant_id !== grantFilter) return false;
+    if (statusFilter !== 'all' && t.allowability_status !== statusFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return (
@@ -86,6 +89,14 @@ export default function TransactionsPage() {
             To upload transactions, go to an organization → grant → Transactions tab.
           </p>
         </div>
+        {statusFilter !== 'all' && (
+          <button
+            onClick={() => setStatusFilter('all')}
+            className="text-xs text-muted-foreground hover:underline"
+          >
+            Clear filter ×
+          </button>
+        )}
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -93,6 +104,18 @@ export default function TransactionsPage() {
           <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Search transactions..." className="pl-8" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
+        <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <SelectTrigger className="w-44">
+            <SelectValue placeholder="All statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Statuses</SelectItem>
+            <SelectItem value="questioned">Questioned</SelectItem>
+            <SelectItem value="unallowable">Unallowable</SelectItem>
+            <SelectItem value="allowable">Allowable</SelectItem>
+            <SelectItem value="pending_review">Pending Review</SelectItem>
+          </SelectContent>
+        </Select>
         <Select value={grantFilter} onValueChange={setGrantFilter}>
           <SelectTrigger className="w-56">
             <SelectValue placeholder="All grants" />
@@ -175,5 +198,13 @@ export default function TransactionsPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+export default function TransactionsPage() {
+  return (
+    <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading...</div>}>
+      <TransactionsContent />
+    </Suspense>
   );
 }

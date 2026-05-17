@@ -285,6 +285,18 @@ ${flaggedLines}
       }
     }
 
+    // Mark all cited transactions as 'questioned' so they surface in filters and dashboard
+    const allCitedIds = (result.findings ?? [])
+      .flatMap((f: any) => f.transaction_ids ?? [])
+      .filter((id: string) => validTxIds.has(id));
+
+    if (allCitedIds.length > 0) {
+      await supabase
+        .from('transactions')
+        .update({ allowability_status: 'questioned' })
+        .in('id', allCitedIds);
+    }
+
     return NextResponse.json({
       reportId: report.id,
       stats: {

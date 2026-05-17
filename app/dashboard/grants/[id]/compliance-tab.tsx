@@ -50,6 +50,7 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
   const [forceUnlocked, setForceUnlocked] = useState(false);
   const [dateFrom, setDateFrom] = useState(grant.period_start ?? '');
   const [dateTo, setDateTo] = useState(grant.period_end ?? '');
+  const [loadingMsg, setLoadingMsg] = useState('');
 
   const loadData = useCallback(async () => {
     const [reportsRes, reqRes, txTotalRes, pendingRes, questionedRes] = await Promise.all([
@@ -91,12 +92,34 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
   const lastRunFoundNothing = runLog.length > 0 && runLog[0].finding_count === 0;
   const hasNewTransactions = newTxCount > 0;
   const isLocked = lastRunFoundNothing && !hasNewTransactions && !forceUnlocked;
+  const passNumber = runLog.length + 1;
+
+  const PASS_MESSAGES: string[][] = [
+    ['Screening transactions against grant requirements...', 'Checking allowable cost categories...', 'Verifying period of performance dates...', 'Scanning for unallowable cost keywords...', 'Analyzing procurement patterns...', 'Generating GAGAS findings...'],
+    ['Looking for patterns the first pass may have missed...', 'Analyzing vendor relationships and amounts...', 'Checking for split purchases and threshold manipulation...', 'Deep-diving documentation deficiencies...', 'Cross-referencing against all requirements...', 'Compiling additional findings...'],
+    ['Performing final verification on remaining transactions...', 'Cross-checking all unflagged transactions...', 'Verifying complete coverage of compliance requirements...', 'Checking for overlooked edge cases...', 'Confirming analysis completeness...', 'Wrapping up final findings...'],
+  ];
+
+  const PASS_FOCUS: string[] = [
+    'Scans all pending transactions for obvious compliance violations',
+    'Looks deeper for patterns and systemic issues the first pass may have missed',
+    'Final verification — cross-checks remaining transactions for any overlooked edge cases',
+  ];
 
   function getButtonLabel() {
-    if (runLog.length === 0) return 'Generate Compliance Report';
-    if (hasNewTransactions) return `Run Rollforward (${newTxCount} new)`;
-    if (lastRunFoundNothing) return 'All Issues Identified';
-    return 'Run Again for More Accuracy';
+    if (runLog.length === 0) return 'Start Compliance Analysis';
+    if (hasNewTransactions) return `Run Rollforward — ${newTxCount} New Transaction${newTxCount !== 1 ? 's' : ''}`;
+    if (lastRunFoundNothing) return 'Analysis Complete';
+    const pass = Math.min(passNumber, 3);
+    if (pass === 2) return 'Run Pass 2 — Deeper Analysis';
+    if (pass === 3) return 'Run Pass 3 — Final Verification';
+    return `Run Pass ${pass} — Additional Check`;
+  }
+
+  function getPassFocus() {
+    if (hasNewTransactions) return `Testing ${newTxCount} new transaction${newTxCount !== 1 ? 's' : ''} uploaded since the last run`;
+    const idx = Math.min(passNumber - 1, PASS_FOCUS.length - 1);
+    return PASS_FOCUS[idx] ?? PASS_FOCUS[PASS_FOCUS.length - 1];
   }
 
   async function handleGenerate() {
@@ -105,6 +128,17 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
     if (readiness.transactions === 0) { toast.error('Upload transactions before running a compliance check.'); return; }
     setForceUnlocked(false);
     setIsGenerating(true);
+
+    // Animate loading messages specific to this pass
+    const passIdx = Math.min(runLog.length, PASS_MESSAGES.length - 1);
+    const msgs = PASS_MESSAGES[passIdx];
+    let msgIdx = 0;
+    setLoadingMsg(msgs[0]);
+    const msgInterval = setInterval(() => {
+      msgIdx = (msgIdx + 1) % msgs.length;
+      setLoadingMsg(msgs[msgIdx]);
+    }, 3500);
+
     try {
       const res = await fetch('/api/compliance', {
         method: 'POST',
@@ -120,6 +154,8 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
     } catch {
       toast.error('Failed to generate. Check your OpenAI API key in .env');
     } finally {
+      clearInterval(msgInterval);
+      setLoadingMsg('');
       setIsGenerating(false);
     }
   }
@@ -157,27 +193,31 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
         <p className="text-sm text-muted-foreground">
           Findings accumulate across runs. Keep generating until no new issues are found, then resolve questioned transactions and export the final report.
         </p>
-        <div className="flex flex-col items-end gap-1 shrink-0">
+        <div className="flex flex-col items-end gap-1.5 shrink-0">
           <div className="flex items-center gap-2">
             {allFindings.length > 0 && (
               <Button variant="outline" size="sm" onClick={handleExport} disabled={isExporting || questionedCount > 0} title={questionedCount > 0 ? `Resolve ${questionedCount} questioned transaction${questionedCount !== 1 ? 's' : ''} first` : 'Export final consolidated PDF'}>
                 {isExporting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Exporting...</> : questionedCount > 0 ? <><Lock className="h-4 w-4 mr-2" />Export PDF</> : <><Download className="h-4 w-4 mr-2" />Export Final PDF</>}
               </Button>
             )}
-            <Button onClick={handleGenerate} disabled={isGenerating || isLocked} variant={isLocked ? 'secondary' : 'default'}>
+            <Button onClick={handleGenerate} disabled={isGenerating || isLocked} variant={isLocked ? 'secondary' : 'default'} className="min-w-[220px]">
               {isGenerating
                 ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Analyzing...</>
                 : isLocked
-                  ? <><CheckCircle className="h-4 w-4 mr-2 text-green-600" />All Issues Identified</>
+                  ? <><CheckCircle className="h-4 w-4 mr-2 text-green-600" />Analysis Complete</>
                   : <><RefreshCw className="h-4 w-4 mr-2" />{getButtonLabel()}</>
               }
             </Button>
           </div>
-          {isLocked && !isGenerating && (
+          {isGenerating && loadingMsg ? (
+            <p className="text-xs text-muted-foreground italic text-right max-w-xs">{loadingMsg}</p>
+          ) : !isLocked && runLog.length >= 0 ? (
+            <p className="text-xs text-muted-foreground text-right max-w-xs">{getPassFocus()}</p>
+          ) : isLocked ? (
             <button onClick={() => setForceUnlocked(true)} className="text-xs text-muted-foreground hover:underline">
               Run again anyway →
             </button>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -249,15 +289,21 @@ export default function ComplianceTab({ grantId, grant }: { grantId: string; gra
             </Card>
             <Card className="p-5">
               <div className="text-sm font-medium mb-2">Run History</div>
-              <div className="space-y-1.5 max-h-24 overflow-y-auto">
-                {runLog.map(run => (
-                  <div key={run.id} className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">{new Date(run.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                    <span className={`font-medium ${run.finding_count === 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {run.finding_count === 0 ? '✓ No new issues' : `+${run.finding_count} finding${run.finding_count !== 1 ? 's' : ''}`}
-                    </span>
-                  </div>
-                ))}
+              <div className="space-y-1.5 max-h-28 overflow-y-auto">
+                {[...runLog].reverse().map((run, i) => {
+                  const passNum = runLog.length - i;
+                  return (
+                    <div key={run.id} className="flex items-center justify-between text-xs gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="bg-muted rounded px-1 font-mono text-muted-foreground">P{passNum}</span>
+                        <span className="text-muted-foreground">{new Date(run.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                      </div>
+                      <span className={`font-medium ${run.finding_count === 0 ? 'text-green-600' : 'text-orange-600'}`}>
+                        {run.finding_count === 0 ? '✓ Clean' : `+${run.finding_count}`}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </Card>
           </div>

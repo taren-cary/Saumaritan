@@ -11,6 +11,9 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { FileUp, Loader2, Search, Trash2 } from 'lucide-react';
 
@@ -22,6 +25,7 @@ type Transaction = {
   vendor: string | null;
   budget_category: string | null;
   allowability_status: string;
+  auditor_note: string | null;
   source_file: string | null;
 };
 
@@ -82,11 +86,13 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [search, setSearch] = useState('');
+  const [noteDialogTxId, setNoteDialogTxId] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState('');
 
   const loadTransactions = useCallback(async () => {
     const { data } = await supabase
       .from('transactions')
-      .select('id,date,description,amount,vendor,budget_category,allowability_status,source_file')
+      .select('id,date,description,amount,vendor,budget_category,allowability_status,auditor_note,source_file')
       .eq('grant_id', grantId)
       .order('date', { ascending: false, nullsFirst: false });
     setTransactions(data ?? []);
@@ -146,8 +152,24 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   }
 
   async function updateAllowability(id: string, status: string) {
+    if (status === 'disallowed') {
+      setNoteDialogTxId(id);
+      setNoteText('');
+      // Optimistically update status, note saved when dialog is confirmed
+      await supabase.from('transactions').update({ allowability_status: status }).eq('id', id);
+      setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: status } : t));
+      return;
+    }
     await supabase.from('transactions').update({ allowability_status: status }).eq('id', id);
     setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: status } : t));
+  }
+
+  async function saveNote() {
+    if (!noteDialogTxId) return;
+    await supabase.from('transactions').update({ auditor_note: noteText || null }).eq('id', noteDialogTxId);
+    setTransactions(ts => ts.map(t => t.id === noteDialogTxId ? { ...t, auditor_note: noteText || null } : t));
+    setNoteDialogTxId(null);
+    setNoteText('');
   }
 
   async function markAllReviewed() {
@@ -253,17 +275,24 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
                     </Select>
                   </TableCell>
                   <TableCell>
-                    <Select value={t.allowability_status ?? 'pending_review'} onValueChange={v => updateAllowability(t.id, v)}>
-                      <SelectTrigger className={`h-7 text-xs w-36 ${statusStyles[t.allowability_status ?? ''] ?? ''}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pending_review">Pending Review</SelectItem>
-                        <SelectItem value="questioned">Questioned</SelectItem>
-                        <SelectItem value="cleared">Cleared</SelectItem>
-                        <SelectItem value="disallowed">Disallowed</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="space-y-1">
+                      <Select value={t.allowability_status ?? 'pending_review'} onValueChange={v => updateAllowability(t.id, v)}>
+                        <SelectTrigger className={`h-7 text-xs w-36 ${statusStyles[t.allowability_status ?? ''] ?? ''}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="pending_review">Pending Review</SelectItem>
+                          <SelectItem value="questioned">Questioned</SelectItem>
+                          <SelectItem value="cleared">Cleared</SelectItem>
+                          <SelectItem value="disallowed">Disallowed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {t.allowability_status === 'disallowed' && t.auditor_note && (
+                        <p className="text-xs text-red-600 italic max-w-[140px] truncate" title={t.auditor_note}>
+                          {t.auditor_note}
+                        </p>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(t.id)}>
@@ -276,6 +305,38 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
           </Table>
         )}
       </Card>
+
+      {/* Auditor note dialog — appears when marking a transaction as Disallowed */}
+      <Dialog open={!!noteDialogTxId} onOpenChange={open => { if (!open) { saveNote(); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Auditor Note</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              Transaction marked as <strong className="text-red-600">Disallowed</strong>. Add a note explaining why this cost is being disallowed — this will appear in the final compliance report alongside the AI finding.
+            </p>
+            <div className="space-y-1">
+              <Label className="text-xs">Auditor's Reasoning</Label>
+              <Textarea
+                placeholder="e.g. Nonprofit confirmed this was an error. Entertainment costs are unallowable per 2 CFR §200.438. Funds to be returned."
+                value={noteText}
+                onChange={e => setNoteText(e.target.value)}
+                rows={3}
+                autoFocus
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setNoteDialogTxId(null); setNoteText(''); }}>
+              Skip
+            </Button>
+            <Button onClick={saveNote}>
+              Save Note
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

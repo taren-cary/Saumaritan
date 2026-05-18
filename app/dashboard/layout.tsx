@@ -1,10 +1,13 @@
 "use client";
 
 import Image from 'next/image';
+import { Space_Grotesk } from 'next/font/google';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Button } from '@/components/ui/button';
 import { FileSpreadsheet, LayoutDashboard, Settings, Users } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
+
+const spaceGrotesk = Space_Grotesk({ subsets: ['latin'], weight: ['700'] });
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -22,7 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <nav className="border-b">
         <div className="flex h-16 items-center px-4 gap-4">
           <Image src="/saumaritanlogo.svg" alt="Saumaritan" width={44} height={44} />
-          <h1 className="text-xl font-bold">Saumaritan</h1>
+          <h1 className={`text-xl font-bold tracking-wide ${spaceGrotesk.className}`} style={{ color: '#1d4e89' }}>Saumaritan</h1>
           <div className="ml-auto flex items-center space-x-4">
             <ModeToggle />
           </div>

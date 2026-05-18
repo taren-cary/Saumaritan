@@ -1,8 +1,9 @@
 "use client";
 
+import Image from 'next/image';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Button } from '@/components/ui/button';
-import { Building2, FileSpreadsheet, LayoutDashboard, Settings, Users } from 'lucide-react';
+import { FileSpreadsheet, LayoutDashboard, Settings, Users } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -20,8 +21,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-background">
       <nav className="border-b">
         <div className="flex h-16 items-center px-4 gap-4">
-          <Building2 className="h-6 w-6" />
-          <h1 className="text-lg font-semibold">Saumaritan</h1>
+          <Image src="/saumaritanlogo.svg" alt="Saumaritan" width={32} height={32} />
           <div className="ml-auto flex items-center space-x-4">
             <ModeToggle />
           </div>

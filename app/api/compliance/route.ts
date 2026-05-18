@@ -283,8 +283,10 @@ ${flaggedLines}
     if (reportError) throw reportError;
 
     const validTxIds = new Set(transactions.map(t => t.id));
+    const findings = Array.isArray(result.findings) ? result.findings : [];
+    if (!findings.length) console.log('[compliance] Phase 2 returned 0 findings for this run');
 
-    for (const f of result.findings ?? []) {
+    for (const f of findings) {
       const { data: finding, error: findingError } = await supabase
         .from('compliance_findings')
         .insert({
@@ -314,15 +316,16 @@ ${flaggedLines}
     }
 
     // Mark all cited transactions as 'questioned' so they surface in filters and dashboard
-    const allCitedIds = (result.findings ?? [])
+    const allCitedIds = findings
       .flatMap((f: any) => f.transaction_ids ?? [])
       .filter((id: string) => validTxIds.has(id));
 
     if (allCitedIds.length > 0) {
-      await supabase
+      const { error: statusError } = await supabase
         .from('transactions')
         .update({ allowability_status: 'questioned' })
         .in('id', allCitedIds);
+      if (statusError) console.error('[compliance] Failed to update transaction statuses:', statusError);
     }
 
     return NextResponse.json({

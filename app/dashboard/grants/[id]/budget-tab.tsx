@@ -127,8 +127,8 @@ export default function BudgetTab({ grantId }: { grantId: string }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {rows.map((row, i) => {
-              const label = CATEGORIES[i].label;
+            {rows.map((row) => {
+              const label = CATEGORIES.find(c => c.key === row.category)?.label ?? row.category;
               const remaining = row.approved - row.actual;
               const pctUsed = row.approved > 0 ? Math.round((row.actual / row.approved) * 100) : null;
               return (

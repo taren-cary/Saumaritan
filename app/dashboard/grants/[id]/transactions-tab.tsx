@@ -95,6 +95,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
   const [sourceFiles, setSourceFiles] = useState<string[]>([]);
   const [noteDialogTxId, setNoteDialogTxId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState('');
+  const [prevStatus, setPrevStatus] = useState<string | null>(null);
 
   const loadTransactions = useCallback(async () => {
     const [txRes, filesRes] = await Promise.all([
@@ -125,7 +126,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
       .from('transactions')
       .select('id,date,description,amount,vendor,budget_category,allowability_status,auditor_note,source_file')
       .eq('grant_id', grantId)
-      .order('date', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
       .range(from, from + PAGE_SIZE - 1);
     const newList = [...transactions, ...(data ?? [])];
     setTransactions(newList);
@@ -187,23 +188,56 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
 
   async function updateAllowability(id: string, status: string) {
     if (status === 'disallowed') {
+      const current = transactions.find(t => t.id === id)?.allowability_status ?? 'pending_review';
+      setPrevStatus(current);
       setNoteDialogTxId(id);
       setNoteText('');
-      // Optimistically update status, note saved when dialog is confirmed
-      await supabase.from('transactions').update({ allowability_status: status }).eq('id', id);
-      setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: status } : t));
+      // Optimistically show in UI — only saved to DB when dialog is confirmed or skipped
+      setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: 'disallowed' } : t));
       return;
     }
-    await supabase.from('transactions').update({ allowability_status: status }).eq('id', id);
-    setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: status } : t));
+    const { error } = await supabase.from('transactions').update({ allowability_status: status }).eq('id', id);
+    if (!error) setTransactions(ts => ts.map(t => t.id === id ? { ...t, allowability_status: status } : t));
+  }
+
+  function cancelNote() {
+    if (!noteDialogTxId) return;
+    // Revert optimistic UI update, don't save anything
+    setTransactions(ts => ts.map(t => t.id === noteDialogTxId ? { ...t, allowability_status: prevStatus ?? 'pending_review' } : t));
+    setNoteDialogTxId(null);
+    setNoteText('');
+    setPrevStatus(null);
   }
 
   async function saveNote() {
     if (!noteDialogTxId) return;
-    await supabase.from('transactions').update({ auditor_note: noteText || null }).eq('id', noteDialogTxId);
-    setTransactions(ts => ts.map(t => t.id === noteDialogTxId ? { ...t, auditor_note: noteText || null } : t));
+    // Save status + note atomically
+    const { error } = await supabase.from('transactions')
+      .update({ allowability_status: 'disallowed', auditor_note: noteText || null })
+      .eq('id', noteDialogTxId);
+    if (error) {
+      toast.error('Failed to save');
+      cancelNote();
+      return;
+    }
+    setTransactions(ts => ts.map(t => t.id === noteDialogTxId
+      ? { ...t, allowability_status: 'disallowed', auditor_note: noteText || null }
+      : t));
     setNoteDialogTxId(null);
     setNoteText('');
+    setPrevStatus(null);
+  }
+
+  async function skipNote() {
+    if (!noteDialogTxId) return;
+    // Save status only (no note)
+    const { error } = await supabase.from('transactions')
+      .update({ allowability_status: 'disallowed' })
+      .eq('id', noteDialogTxId);
+    if (error) { toast.error('Failed to save'); cancelNote(); return; }
+    setNoteDialogTxId(null);
+    setNoteText('');
+    setPrevStatus(null);
   }
 
   async function deleteBySourceFile(file: string) {
@@ -401,7 +435,7 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
       )}
 
       {/* Auditor note dialog — appears when marking a transaction as Disallowed */}
-      <Dialog open={!!noteDialogTxId} onOpenChange={open => { if (!open) { saveNote(); } }}>
+      <Dialog open={!!noteDialogTxId} onOpenChange={open => { if (!open) cancelNote(); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Add Auditor Note</DialogTitle>
@@ -422,9 +456,8 @@ export default function TransactionsTab({ grantId }: { grantId: string }) {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setNoteDialogTxId(null); setNoteText(''); }}>
-              Skip
-            </Button>
+            <Button variant="outline" onClick={cancelNote}>Cancel</Button>
+            <Button variant="outline" onClick={skipNote}>Skip (no note)</Button>
             <Button onClick={saveNote}>
               Save Note
             </Button>

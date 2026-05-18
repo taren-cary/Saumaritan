@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle, CircleDollarSign, FileText, TrendingUp } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 const CATEGORY_LABELS: Record<string, string> = {
   personnel: 'Personnel', fringe: 'Fringe', travel: 'Travel',
@@ -25,7 +25,6 @@ const severityStyles: Record<string, { badge: string; label: string }> = {
 const fmt = (n: number) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 type SpendingRow = { name: string; amount: number };
-type ComplianceRow = { name: string; score: number };
 type RecentFinding = { id: string; finding_ref: string; severity: string; category: string | null; questioned_costs: number; grantName: string };
 
 export default function DashboardPage() {
@@ -37,17 +36,15 @@ export default function DashboardPage() {
   const [activeGrants, setActiveGrants] = useState(0);
   const [questionedCosts, setQuestionedCosts] = useState(0);
   const [spending, setSpending] = useState<SpendingRow[]>([]);
-  const [compliance, setCompliance] = useState<ComplianceRow[]>([]);
   const [recentFindings, setRecentFindings] = useState<RecentFinding[]>([]);
 
   useEffect(() => {
     async function load() {
-      const [txRes, grantRes, findingsRes, spendingRes, complianceRes] = await Promise.all([
+      const [txRes, grantRes, findingsRes, spendingRes] = await Promise.all([
         supabase.from('transactions').select('amount, allowability_status'),
         supabase.from('grants').select('id', { count: 'exact', head: true }).eq('status', 'active'),
         supabase.from('compliance_findings').select('id, finding_ref, severity, category, questioned_costs, compliance_reports(grant_id, grants(name))').order('created_at', { ascending: false }).limit(6),
         supabase.from('transactions').select('budget_category, amount').not('budget_category', 'is', null),
-        supabase.from('compliance_reports').select('grant_id, overall_score, grants(name)').eq('status', 'complete').order('created_at', { ascending: false }),
       ]);
 
       const txData = txRes.data ?? [];
@@ -67,18 +64,6 @@ export default function DashboardPage() {
           .filter(r => r.amount > 0)
           .sort((a, b) => b.amount - a.amount)
       );
-
-      // Latest compliance score per grant
-      const seen = new Set<string>();
-      const rows: ComplianceRow[] = [];
-      for (const r of complianceRes.data ?? []) {
-        if (!seen.has(r.grant_id)) {
-          seen.add(r.grant_id);
-          const name = (r as any).grants?.name ?? 'Unknown';
-          rows.push({ name: name.length > 16 ? name.slice(0, 14) + '…' : name, score: r.overall_score ?? 0 });
-        }
-      }
-      setCompliance(rows);
 
       // Questioned costs from findings
       const fData = findingsRes.data ?? [];
@@ -130,62 +115,23 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Charts row */}
-      {(spending.length > 0 || compliance.length > 0) && (
-        <div className="grid gap-4 md:grid-cols-2">
-
-          {spending.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Spending by Budget Category</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={Math.max(180, spending.length * 32)}>
-                  <BarChart data={spending} layout="vertical" margin={{ left: 0, right: 24, top: 4, bottom: 4 }}>
-                    <XAxis
-                      type="number"
-                      tick={{ fontSize: 10 }}
-                      tickFormatter={v => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`}
-                    />
-                    <YAxis type="category" dataKey="name" width={82} tick={{ fontSize: 11 }} />
-                    <Tooltip formatter={(v: any) => [fmt(Number(v)), 'Spent']} />
-                    <Bar dataKey="amount" fill="#1d4e89" radius={[0, 3, 3, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          )}
-
-          {compliance.length > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium">Compliance Score by Grant</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={compliance} margin={{ left: 0, right: 8, top: 4, bottom: compliance.some(r => r.name.length > 8) ? 32 : 8 }}>
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={compliance.length > 3 ? -25 : 0} textAnchor={compliance.length > 3 ? 'end' : 'middle'} />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                    <Tooltip formatter={(v: any) => [`${v}/100`, 'Score']} />
-                    <Bar dataKey="score" radius={[3, 3, 0, 0]}>
-                      {compliance.map((entry, i) => (
-                        <Cell
-                          key={i}
-                          fill={entry.score >= 80 ? '#16a34a' : entry.score >= 60 ? '#ca8a04' : '#dc2626'}
-                        />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="flex gap-4 mt-1 text-xs text-muted-foreground justify-center">
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-600 inline-block" />80–100</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-600 inline-block" />60–79</span>
-                  <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-600 inline-block" />0–59</span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+      {/* Spending by category chart */}
+      {spending.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">Spending by Budget Category</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={Math.max(180, spending.length * 32)}>
+              <BarChart data={spending} layout="vertical" margin={{ left: 0, right: 24, top: 4, bottom: 4 }}>
+                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={v => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
+                <YAxis type="category" dataKey="name" width={82} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v: any) => [fmt(Number(v)), 'Spent']} />
+                <Bar dataKey="amount" fill="#1d4e89" radius={[0, 3, 3, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
       )}
 
       {/* Recent findings */}

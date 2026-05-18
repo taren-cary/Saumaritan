@@ -21,7 +21,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="min-h-screen bg-background">
       <nav className="border-b">
         <div className="flex h-16 items-center px-4 gap-4">
-          <Image src="/saumaritanlogo.svg" alt="Saumaritan" width={32} height={32} />
+          <Image src="/saumaritanlogo.svg" alt="Saumaritan" width={44} height={44} />
+          <h1 className="text-xl font-bold">Saumaritan</h1>
           <div className="ml-auto flex items-center space-x-4">
             <ModeToggle />
           </div>
